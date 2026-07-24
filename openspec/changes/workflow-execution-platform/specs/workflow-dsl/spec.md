@@ -77,6 +77,35 @@ The DSL SHALL infer a step's dependencies from the step-output bindings it reads
 - **WHEN** a workflow-writer declares that step B must run after step A even though step B does not read any of step A's outputs
 - **THEN** the DSL SHALL accept an explicit ordering declaration and enforce it at execution time
 
+### Requirement: Step identifiers are human-chosen and unique within the whole workflow-spec
+A step's identifier SHALL be a workflow-writer-chosen string, validated unique across the entire workflow-spec - including steps nested within different `branch` cases or within a `map`/`forEach` body - rather than scoped per-case or per-body, and rather than being an opaque, platform-generated value.
+
+#### Scenario: Duplicate step ids are rejected regardless of nesting
+- **WHEN** two steps share the same identifier, whether at the top level or nested within different `branch` cases or `map` bodies
+- **THEN** the DSL SHALL reject the workflow-spec as having a duplicate step identifier
+
+#### Scenario: A step in one branch case may be referenced from outside it
+- **WHEN** a step id is declared inside a `branch` case or `map` body
+- **THEN** it SHALL be resolvable via `dependsOn` or a step-output binding using the same flat id-namespace as any top-level step
+
+### Requirement: Secret references are declared separately from data bindings
+A step SHALL declare its secret references in a distinct location from its data (`reads`/`writes`) bindings, rather than as a kind of `Binding`. This preserves the categorical exclusion of secrets from binding-only contexts (e.g. a `compute` binding's `using` inputs, which SHALL NOT accept a secret reference under any binding kind).
+
+#### Scenario: A secret reference is not a binding kind
+- **WHEN** a step declares a secret reference
+- **THEN** the DSL SHALL require it in a location distinct from that step's `reads`/`writes` bindings, and SHALL NOT accept a secret reference expressed as a `from: secret`-style binding
+
+### Requirement: A literal binding kind supplies a fixed value with no external reference
+The DSL SHALL support a `literal` binding kind whose value is a fixed value (including an arbitrary compound/nested structure) authored directly in the workflow-spec, passed through opaquely without invoking a registered service, resolving a data source, or requiring a placement/scheduling decision.
+
+#### Scenario: A literal value is used as-is
+- **WHEN** a binding is declared as a `literal`
+- **THEN** the system SHALL use its authored value directly at run time, without any resolution step
+
+#### Scenario: A literal binding supplies a structured value
+- **WHEN** a `literal` binding's authored value is a compound/nested structure (e.g. a list of function references for a nesting allowlist)
+- **THEN** the DSL SHALL pass it through opaquely, the same way a compound `request`-scoped parameter value is passed through
+
 ### Requirement: Workflow-spec exposes a derived signature
 The system SHALL derive, from a workflow-spec's IR, a signature consisting of: the set of request-scoped parameters callers must supply, whether execution requires an active session, and the set of named outputs - without requiring the workflow-writer to author this signature separately.
 
@@ -106,9 +135,13 @@ Where a registered service's function declares (via its `nesting_declaration` ca
 - **WHEN** a step invokes a function whose `nesting_declaration` specifies an enumerable target set
 - **THEN** the concrete function(s) it nests SHALL be supplied via the step's ordinary parameter bindings, validated by the same generic required-parameter rule as any other binding
 
-#### Scenario: An open nesting target's allowlist is an ordinary required parameter
+#### Scenario: An open nesting target's allowlist is an ordinary required parameter, bound as a literal
 - **WHEN** a step invokes a function whose `nesting_declaration` specifies an open target set (e.g. an agent-runner)
-- **THEN** the allowlist and governor SHALL be supplied as ordinary required parameters of that function's signature, per the generic required-parameter validation rule, with no agent-specific or nesting-specific DSL construct
+- **THEN** the allowlist SHALL be supplied as a `literal` binding (not dynamically bound from `request`, `session`, or another step's output), and the governor SHALL be supplied as an ordinary required parameter of that function's signature, per the generic required-parameter validation rule, with no agent-specific or nesting-specific DSL construct
+
+#### Scenario: A literal-bound allowlist is a valid target for pre-warming candidacy
+- **WHEN** an open-target step's allowlist binding resolves at authoring/compile time (because it is a `literal`)
+- **THEN** the scheduler MAY treat the allowlist's named functions as candidates for the placement/pooling admission model (per `execution-scheduling`), without being required to unconditionally pre-warm every listed target
 
 ### Requirement: Branch construct with statically enumerable cases
 The DSL SHALL support a branch construct that selects one of several statically declared sub-graphs to execute based on a runtime value, and SHALL require every possible case (including a default) to be declared in the IR even though only one is executed per run.
@@ -121,6 +154,25 @@ The DSL SHALL support a branch construct that selects one of several statically 
 - **WHEN** a workflow-spec containing a branch step is submitted for scheduling analysis
 - **THEN** the system SHALL be able to enumerate every declared case's service calls, secret references, and placement implications ahead of execution, regardless of which case is later taken
 
+### Requirement: Each branch case exposes its result via `yields`, a stable name independent of which case ran
+Each case of a branch construct SHALL declare a `yields` mapping of named bindings pointing into that case's own internal steps. A step outside the branch that needs a value produced by whichever case executes SHALL reference the branch's own step id and a `yields` name, never a specific case's internal step id directly.
+
+#### Scenario: Downstream reference resolves regardless of which case ran
+- **WHEN** a step after a branch reads `{ from: step, id: <branchId>, output: <yieldsName> }`
+- **THEN** the system SHALL resolve it through whichever case's `yields` declaration actually executed, without the reading step needing to know which case that was
+
+#### Scenario: A case's internal step id is not directly referenceable from outside the branch
+- **WHEN** a step outside a branch attempts to reference a step id declared inside one of that branch's cases directly (not through `yields`)
+- **THEN** the DSL SHALL reject the workflow-spec, since that step id's output only conditionally exists
+
+#### Scenario: `yields` defaults to a single step's whole output when a case has exactly one step
+- **WHEN** a branch case contains exactly one step and declares no explicit `yields`
+- **THEN** the system SHALL treat that single step's whole output object as the case's yielded value
+
+#### Scenario: `yields` is required when a case has more than one step
+- **WHEN** a branch case contains more than one step
+- **THEN** the DSL SHALL reject the case if it declares no `yields`, since no step's output can be inferred as "the" result
+
 ### Requirement: Map construct with statically declared body and dynamically sized cardinality
 The DSL SHALL support a map/forEach construct whose iteration body (which service(s) it calls, what it reads/writes, its secret references) is statically declared, while the number of iterations is determined at run time from a runtime-sized collection. Each iteration SHALL execute as an independently tracked, durable unit of execution.
 
@@ -131,6 +183,29 @@ The DSL SHALL support a map/forEach construct whose iteration body (which servic
 #### Scenario: Partial failure within a map does not require re-running completed iterations
 - **WHEN** one iteration of a map step fails after other iterations have already completed successfully
 - **THEN** the system SHALL retry only the failed iteration and SHALL NOT re-execute the already-completed iterations
+
+### Requirement: A map's per-iteration result is exposed via `yields`, collected into a parallel array
+A map/forEach construct SHALL declare a `yields` mapping of named bindings pointing into its body's own internal steps. Each named entry SHALL be collected across all iterations into an array, in the same order as the source collection, addressable by a step outside the map via the map's own step id and the `yields` name.
+
+#### Scenario: A named yield is collected into a parallel array
+- **WHEN** a map's `yields` declares a named binding pointing at a body step's output field
+- **THEN** the system SHALL collect that field's value from every iteration into an array, ordered to match the source collection, addressable as `{ from: step, id: <mapId>, output: <yieldsName> }`
+
+#### Scenario: Multiple named yields produce independent parallel arrays
+- **WHEN** a map's `yields` declares more than one named binding
+- **THEN** each name SHALL produce its own independently addressable array, all ordered consistently with the source collection
+
+#### Scenario: A body step's id is not directly referenceable from outside the map
+- **WHEN** a step outside a map attempts to reference a step id declared inside that map's body directly (not through `yields`)
+- **THEN** the DSL SHALL reject the workflow-spec, since that step id exists once per iteration, not as a single addressable value
+
+#### Scenario: `yields` defaults to a single step's whole output when a body has exactly one step
+- **WHEN** a map's body contains exactly one step and declares no explicit `yields`
+- **THEN** the system SHALL treat that single step's whole output object as the per-iteration yielded value, collected into an array
+
+#### Scenario: `yields` is required when a body has more than one step
+- **WHEN** a map's body contains more than one step
+- **THEN** the DSL SHALL reject the map construct if it declares no `yields`, since no step's output can be inferred as "the" per-iteration result
 
 ### Requirement: A map/forEach body may reference its current item via a dedicated binding source
 The DSL SHALL provide a binding source that resolves to the current iteration's item within a map/forEach body, exposing the raw item value without a built-in path/field-extraction syntax.
@@ -207,7 +282,7 @@ The DSL SHALL validate, for every step, that a binding is supplied for each para
 - **THEN** this generic rule alone SHALL require the workflow-writer to supply both bindings, with no DSL-level construct specific to agents or allowlists
 
 ### Requirement: IR carries a whole-document version tag with forward-only, lazy migration
-Every compiled IR document SHALL carry a whole-document version tag. The system SHALL migrate a document to the current version lazily the first time it is opened, using a chain of version-to-version migrators, and SHALL NOT support migrating a document backward to an older version.
+Every compiled IR document SHALL carry a whole-document version tag, named `irVersion`, at the top level of the document. The system SHALL migrate a document to the current version lazily the first time it is opened, using a chain of version-to-version migrators, and SHALL NOT support migrating a document backward to an older version.
 
 #### Scenario: Older document is migrated on open
 - **WHEN** a workflow-spec IR document tagged with an older, still-supported version is opened

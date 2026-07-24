@@ -19,14 +19,15 @@ Both worlds exist simultaneously across the service catalog, decided per-invocat
 - Support both World 1 (spawn-per-call) and World 2 (warm, setup-heavy) services under one model, with the execution strategy chosen by placement logic rather than hardcoded per service.
 - Make session state durable, reconstructable, and independent of any single worker's lifetime.
 - Make affinity (routing to a worker with warm state) strictly an optimization - never a correctness requirement - so the compute substrate (K8s/KEDA) can remain stateless-worker-friendly.
-- Provide native job guarantees: retries, backoff, timeouts, idempotency.
+- Provide native job guarantees: retries, backoff, timeouts, idempotency - as platform-managed defaults, not workflow-writer-configurable settings (see Non-Goals).
 - Inject secrets into steps, scoped by ownership, without leaking across the isolation boundary or into durable execution history.
 - Separate the DSL's authoring surface from a stable intermediate representation (IR), so authoring syntax can evolve or be plural without destabilizing the runtime contract, and so the underlying execution engine can be selected - or changed - independently of the DSL.
 - Support real-world control-flow needs (conditional branching, dynamic-cardinality iteration, and bounded agent-directed composition) while keeping the IR as statically analyzable as possible for the scheduler.
 - Leave the concrete authoring syntax/grammar, the specific secrets-broker product, the service-nesting model, and the execution engine itself as explicit follow-ups (not fully solved here).
 
 **Non-Goals:**
-- Defining the concrete authoring surface syntax/grammar (tracked as an open question / follow-on design).
+- Exposing per-step retry/backoff/timeout as author-configurable DSL settings (D8d) - these are platform-managed defaults, hidden from the authoring surface entirely, not a construct with syntax to design.
+- Providing an explicit per-step error-handling/fallback/compensation construct in the DSL (D8d) - a failed step propagates to native engine retry semantics; there is no DSL-level "catch" or "on failure, run this instead" construct.
 - Selecting a specific secrets-broker product (the injection model is decided in D7; the store is kept agnostic and tracked as an open question).
 - Selecting a specific content-addressed storage product or execution-engine deployment topology (operational choice, deferred to implementation; the engine itself is also not yet selected - see D6).
 - Solving cross-session snapshot merge/branching (out of scope - sessions are modeled as linear chains only).
@@ -458,6 +459,134 @@ This implies a **dataset resource catalog** (tag → digest → storage location
 
 **Alternatives considered**: A bespoke dotted-path syntax for `request` parameters (rejected - would create a second path-expression language alongside JSON-Logic's, for no added expressiveness). A custom URI scheme like `dataset://...` for static refs (rejected in favor of a formal URN - a custom scheme still gestures at being a fetchable location the way `http://` does, which is a smaller but similar overclaim to using OCI syntax outright). Reusing literal OCI reference syntax for datasets (rejected - see above; the pattern is worth keeping, the literal format is not). Bare UUIDs as the primary static reference form (rejected - globally unique but not human-readable, losing namespace/hierarchy context that a URN retains).
 
+### D8b: The dataset resource catalog's byte store is dedicated object storage, not the artifact registry
+
+Resolves the "dataset resource catalog product/implementation" open question left by D8a, by applying the same index/byte-store split D12 later formalized for the service registry: the tag→digest→storage-location **index** is a thin, bespoke, unavoidable component regardless of product choice (a small lookup table, whatever backs it), while the **byte store** underneath a resolved digest is a product choice this decision settles.
+
+**The byte store is dedicated object storage (S3/GCS/MinIO-shaped), not the artifact registry used for D12's `oci_ref`.** Both options were considered and both are consistent with D8a (neither exposes OCI syntax to the workflow-writer, who only ever sees the URN):
+
+```
+   OPTION CONSIDERED: reuse the artifact registry
+     store dataset bytes as an OCI artifact (custom media type) in the
+     same registry deployment backing D12's oci_ref - one artifact-
+     storage system total, plus registry-native replication/GC and
+     (if supported) Cosign/Notation-style signing "for free"
+
+   CHOSEN: dedicated object storage
+     dataset bytes live in a plain object store; the index maps
+     URN -> digest -> object key
+```
+
+**Rationale is the consumption path, not the registration path.** D1/D2's materialization reads a dataset's bytes into a running service - a large-blob-GET workload (D1's matrix explicitly considers "tens of GB" scale), not a `docker pull`-shaped one. An artifact registry can technically serve arbitrary-sized OCI blobs, but nothing is gained from registry-native pull tooling once the materialization path fetches the blob directly anyway - that would make the registry an expensive object-store facade bought at the cost of adapter-layer friction (mapping the URN's namespace/name onto the registry's repository-naming rules, and depending on a specific product's OCI-artifact-manifest support being solid rather than image-only). Object storage is the native fit for the workload that actually exists.
+
+**Accepted cost.** This forgoes the "for free" integrity/signing story (Cosign/Notation-style provenance) and the operational consolidation of registering datasets and service images in one artifact-storage system, both of which the rejected option would have provided. Dataset integrity/provenance is not required by any decision so far; if a real need for it emerges, it can be layered onto object storage independently (checksums, a signing scheme) rather than requiring an artifact-registry dependency to get it.
+
+**This does not reopen or conflict with the D6 Postgres-consolidation finding.** That finding (design.md, D6 discussion) is about the tag→digest→location **index** potentially sharing a Postgres instance with the placement-resolver, durability layer, and session log if a Postgres-native engine is chosen for D6 - a statement about where the *index* lives. This decision is only about where the resolved **bytes** live; the two are independent and this decision imposes no constraint on D6.
+
+**The specific object storage product is deferred**, same posture as the secrets-broker product (D7) and the OCI-registry product/topology (D12): the model (dedicated object storage, index separate from bytes) is decided; which product (S3, GCS, MinIO, or another S3-compatible store) is not.
+
+**Rationale**: Mirrors D12's own architecture (index vs. deferred byte-store) rather than treating the dataset catalog as a novel problem, and resolves the byte-store product question by the actual workload shape (large-blob materialization) rather than by superficial similarity to how service images are stored.
+
+**Alternatives considered**: Reusing the artifact registry via OCI Artifact Manifests (rejected - see rationale above; wins on registration/integrity/ops-consolidation but loses on the consumption path, which is the workload that actually recurs). A hybrid (register in the artifact registry for integrity/audit, but resolve to a direct object-storage copy for materialization) - not rejected outright, but deferred as unjustified additional complexity unless a concrete integrity/provenance need for datasets emerges; simpler to add later than to build now speculatively.
+
+### D8c: Concrete syntax for steps, secrets, branch, and literal bindings
+
+Continues D8a's method (write a complete concrete example against the abstract IR, capture what falls out) for the constructs D8a's own example didn't exercise: step invocation, secret references, `branch`, and the still-unspelled "literal constant" binding kind from D8's own Binding enumeration.
+
+**A step's secret references are a separate block from its data bindings, not a binding kind.** D8's IR summary (line 401) already describes a `Step` as declaring "`reads` and optional `writes` bindings **and secret references**" - two distinct categories, not secret-as-a-`Binding`-kind. This is confirmed by D10's rule that a `compute` binding's `using` inputs "SHALL NOT accept a secret reference" - phrased as a categorical exclusion, which only makes sense if secrets aren't a `Binding` kind that could otherwise slip in like any other source. Concretely:
+
+```yaml
+steps:
+  - id: runQuery
+    service: "registry.internal/sql-exec@sha256:9f2c8e1a..."   # always a digest - see below
+    function: query
+    dependsOn: [loadDump]
+    reads:
+      dump: { from: session, key: sandbox_dump }
+      sql:  { from: request, param: query }
+    secrets:
+      apiKey: { scope: writer, name: sqlExecApiKey }
+    writes:
+      dump: { to: session, key: sandbox_dump }
+```
+
+**`writes` gating is automatic runtime behavior, never an authored flag.** A `WriteTarget`'s change-detection gating (D4) is implicit whenever a `writes: {to: session, ...}` binding exists - there is no separate `gated: true` field for the workflow-writer to set or forget.
+
+**A step's `service` reference is always a full digest, typed by the author (or inserted by a tool's usability layer) at authoring time - never a mutable tag re-resolved dynamically.** This deliberately differs from how a static-dataset `ref` resolves (D8a: tag or digest, resolved dynamically at the time of resolution), and the asymmetry is intentional, not an oversight: D5a's trust tier is keyed to a specific image digest, and a redeploy under the same name produces a new digest that "starts over" at `unverified` with no inherited trust. If a service reference floated like a dataset tag, an already-authored workflow that earned `production-proven` trust (enabling pooling/sharing/COW-reuse) could have its underlying build silently swapped out from under it the moment anyone redeploys - collapsing to conservative placement without the author's knowledge, or worse, silently exposing the isolation guarantee itself to a buggy new build's false capability claim. A dataset reference carries no such stake (D13: workflows and datasets carry no trust tier), so floating under a tag is a pure convenience win there with nothing to lose. Same reference *shape*, opposite resolution rule, for a principled reason - not an inconsistency to reconcile.
+
+**Step identifiers are human-chosen strings, validated unique within the whole workflow-spec - not auto-generated, and not scoped per branch-case or per-map-body.** This follows directly from D8a's own collision-resistance rule (design.md:455): namespace/digest treatment is needed "specifically when the referent is global and shared across an unbounded set of authors"; a step id's scope is a single workflow-spec document, authored by one party - the same bucket D8a already puts session keys and secret names in ("plain human-chosen strings remain fine"). The global (not per-case) scoping matters because `{from: step, id: X, output: Y}` and `dependsOn` resolve against one flat id-namespace regardless of which branch case or map body a step happens to sit inside.
+
+**`branch` cases are a map keyed by the selector's stringified value, not a list, and each case carries its own `yields`.** Mirrors JSON-Logic's own value-keyed style rather than inventing a `{when, steps}` list shape. The `yields` field is explained below alongside `map`'s identical need for it - a case's internal steps are only conditionally executed, so anything after the branch needs a stable, case-independent name to read the outcome through, exactly as `map`'s body does:
+
+```yaml
+- id: classify
+  kind: branch
+  selector:
+    compute: { ">": [{ var: "count" }, 100] }
+    using:
+      count: { from: step, id: runQuery, output: rowCount }
+  cases:
+    "true":  { steps: [ { id: vipPath, ... } ], yields: { result: { from: step, id: vipPath, output: x } } }
+    "false": { steps: [ { id: stdPath, ... } ], yields: { result: { from: step, id: stdPath, output: x } } }
+    default: { steps: [ { id: fallbackPath, ... } ], yields: { result: { from: step, id: fallbackPath, output: x } } }
+```
+
+**The "literal constant" binding kind (named in D8's own Binding enumeration but never spelled) is `{ literal: <value> }`.** `<value>` may be an arbitrary JSON value/structure, passed through opaquely - the same "a parameter's value may itself be a compound object" rule already governing `request`-scoped bindings applies here. This is also how a nesting target's concrete function reference or an allowlist is supplied (D9c), since no dedicated "function reference" binding kind is needed: `allowedTools: { literal: [{ service: "...@sha256:...", function: enrich }] }`.
+
+**`yields` is the general mechanism for exposing a named result out of *any* internal step sub-graph - a `map` body, a `branch` case, or (under the existing name `outputs`) the top-level workflow itself - and it resolves the gap this decision originally deferred.** Once a body/case can contain more than one step, nothing says which step's output is "the" result: position-based inference (last step wins) breaks under reordering and under a body/case that itself contains a branch; collecting every internal step's output into one object per result breaks the "signatures stay flat, named, typed" rule (design.md:440) the top-level `outputs` block already follows. The fix generalizes that same rule inward:
+
+```
+   outputs (top-level workflow)   →  { name: Binding, ... }   pointing into the top-level graph
+   yields  (a map body)            →  { name: Binding, ... }   pointing into that body's steps
+   yields  (a branch case)         →  { name: Binding, ... }   pointing into that case's steps
+```
+
+```yaml
+- id: enrichEach
+  kind: map
+  source: { from: step, id: runQuery, output: rows }
+  body:
+    - id: fetchDetails
+      service: "registry.internal/lookup-svc@sha256:aaa..."
+      function: lookupDetails
+      reads:
+        key: { from: item }
+    - id: enrichOne
+      service: "registry.internal/enrichment-svc@sha256:abc..."
+      function: enrich
+      reads:
+        record:  { from: item }
+        details: { from: step, id: fetchDetails, output: details }
+  yields:
+    enrichedRecord: { from: step, id: enrichOne, output: enrichedRecord }
+    wasFlagged:      { from: step, id: enrichOne, output: flagged }
+```
+Downstream, `{ from: step, id: enrichEach, output: enrichedRecord }` resolves to the array of per-iteration `enrichedRecord` values (and `wasFlagged` to the parallel array of flags), regardless of how many steps the body contains or in what order they're declared. The same stability argument applies to `branch`: a step after a `branch` reads `{ from: step, id: <branchId>, output: <name> }`, which resolves through whichever case's `yields` actually ran - never a reference to a specific case's internal step id, which would only conditionally exist.
+
+**`yields` is required whenever a body/case contains more than one step; with exactly one step, it defaults to that step's whole output object.** This keeps the trivial single-step case (the common one) unburdened by boilerplate, while requiring explicitness exactly where the ambiguity this decision is solving actually exists - there is no "last step wins" fragility with only one candidate step to begin with. An explicit `yields` remains legal even for a single-step body/case, e.g. to expose one field rather than the whole response object.
+
+**A soft expectation, not a hard rule this decision enforces**: every case of a given `branch` should produce the same logical shape under the same `yields` names, so a downstream reference means the same thing regardless of which case ran. This isn't mechanically checkable at the schema level (it's a semantic-type claim, not a structural one) and is left to authoring discipline and the derived-signature layer, not a new validation requirement.
+
+**Rationale**: Same method as D8a - concrete syntax is a genuine design activity, and secrets-as-a-separate-category, digest-only service pinning, document-scoped step ids, and `yields` all turn out to be direct consequences of rules this design already committed to elsewhere (D7/D10, D5a/D12, D8a's collision-resistance rule, and design.md:440's flat-signature rule, respectively), not fresh judgment calls.
+
+**Alternatives considered**: Secret references as a `Binding` kind (`{ from: secret, ... }`) (rejected - would make D10's categorical exclusion of secrets from `compute` awkward to state, and blurs a distinction D8's own IR summary already draws). A dedicated "function reference" binding kind for nesting targets (rejected - `literal` already covers it with no new grammar). Auto-generated/opaque step ids with a separate display label (rejected for the grammar itself - D8a's own collision-resistance rule already classifies this as a document-scoped identifier where human strings are fine; a tool MAY still auto-suggest default id values, but the grammar doesn't need a two-field id/label split). `branch` cases as a list of `{when, steps}` objects (rejected - a value-keyed map is simpler and matches JSON-Logic's own idiom). Position-based ("last step wins") or collect-everything output inference for `map`/`branch` (rejected - see the fragility/flatness arguments above; explicit `yields` is the direct generalization of the flat-signature rule already governing top-level `outputs`). Always requiring explicit `yields` even for single-step bodies/cases (rejected as unnecessary boilerplate for the common case, where no ambiguity exists to resolve).
+
+### D8d: Retry/timeout and per-step error-handling have no DSL surface; the IR version field name is locked; branch/map nesting depth is unrestricted
+
+Closes out the remaining items surfaced by auditing D8's original construct list against D8a/D8c's concrete syntax: two "does this need syntax at all" questions (resolved: no), one formality (resolved: yes, lock it), and one confirmation (resolved: no restriction).
+
+**Retries, backoff, and timeouts are platform-managed defaults, with zero DSL surface.** No step-level `retry:`/`timeout:`/`backoff:` field exists or is planned. This differs from D1's "declare intent, not mechanism" pattern (which still gives the workflow-writer an authored *intent* - `interactivity: interactive` - even though the mechanism is chosen elsewhere) - here there is no author-facing intent at all, because unlike placement (where different workflows genuinely want different affinity behavior), retry/backoff/timeout policy is treated as a uniform platform guarantee every step gets, not a per-workflow tuning knob. If a real need for per-step override emerges later, it would be new DSL surface added deliberately, not something implicitly already possible today.
+
+**There is no DSL-level error-handling/fallback/compensation construct.** `branch` and `map` are the DSL's only control-flow constructs, and both dispatch on a runtime *value*, never on step *failure*. A failed step (after exhausting the native engine's retry policy) propagates as workflow failure; there is no "if step X fails, run step Y instead" construct. This is a deliberate scope boundary, not an oversight left implicit: compensation/fallback logic is a real, larger feature (it needs its own failure-classification and partial-rollback semantics) that this design does not attempt.
+
+**The IR version field is `irVersion`, not merely an example name.** D11 introduced it as "e.g. `irVersion: N`"; every worked example since D8c has used it by convention. This decision locks it as the actual field name, at the top level of a `WorkflowSpec` document.
+
+**`branch`/`map` nesting depth is unrestricted.** A `branch` case's steps may contain another `branch` or `map`; a `map` body may contain another `branch` or `map`; recursively, to any depth. This requires no new syntax - it falls directly out of a case/body being "a list of steps," which recursively may itself contain a `branch`/`map` step - and no depth limit is imposed by this decision. (Whether pathologically deep nesting has a real pre-analysis cost worth bounding is left to implementation/observation, not pre-emptively restricted here.)
+
+**Rationale**: All four follow the same shape as this session's other syntax-audit findings - checking whether a candidate construct needs new grammar, and finding either that it structurally doesn't (nesting depth, error-handling scope), that it's explicitly excluded as a scope boundary (retry/timeout, error-handling), or that it merely needed a "e.g." upgraded to a decision (`irVersion`).
+
+**Alternatives considered**: Author-configurable per-step retry/timeout (rejected for now - no concrete need identified; platform-uniform defaults are simpler and can be relaxed later without breaking existing workflow-specs, since adding an optional field is backward-compatible under D11's migration model). A DSL-level catch/compensation construct (rejected as out of scope - a real feature, but a substantially larger one than this design set out to cover; native engine retry is deemed sufficient for this design's scope). Leaving `irVersion` as a non-binding example rather than locking it (rejected - every artifact captured since D8c already uses it as if decided; leaving it formally open served no purpose). A fixed nesting-depth limit (rejected - no evidence yet that deep nesting causes a real problem; premature to constrain without one).
+
 ### D9: Compose vs. nest - workflows are *composed* (in the workflow-spec store), services *nest* other services (a mandatory-by-default policy), and agent-directed nesting is one case of it
 
 **Terminology, disentangled.** Two things earlier drafts of this decision conflated under "composability" are now split into distinct words, because they are distinct activities with distinct owners and distinct storage:
@@ -534,6 +663,8 @@ A nesting service's capability declaration (D12's `nesting_declaration`, extendi
 
 **Who drives the agent loop, resolved**: because the agent-runner is *a service*, invoked as *a step*, its execution lifecycle is ours end-to-end by construction, the same as any nesting service - this settles in favor of the platform hosting the loop as part of step execution, not an externally-hosted agent driving it from outside. A genuinely different idea - exposing the registry *outward* as an MCP server to arbitrary third-party agent hosts (not a step inside any of our workflows at all) - remains a distinct, not-currently-in-scope product surface, noted here so it isn't confused with what D9c actually decides.
 
+**The allowlist binding is required to be a `literal` (D8c), not dynamically bound - which is what makes pre-warming its targets meaningful.** Even though an agent-directed step's *inner call sequence* is genuinely unbounded and unanalyzable ahead of time (see the Risks/Trade-offs entry below), the *reachable set* the allowlist names is fully known the moment the step's inputs resolve - literal-only binding makes that true at the same static-analysis point branch/map already enjoy, not merely at dispatch time. That set is a natural input to placement, but it is **not** grounds for unconditionally pre-warming every listed target regardless of how many are actually likely to be called: doing so would risk starving other pinned/warm state under D4a's shared capacity budget for tools that may never be invoked. Instead, allowlist resolution SHOULD feed D4a's existing cache-admission model as **candidates** - promoted to warm/pooled only if they clear the same size/frequency/capacity bar as any other binding, never as an automatic, unconditional pre-warm-all action. This needs no new mechanism: it is D4's "affinity is always an optimization, never a correctness requirement" applied to a source of candidates D4a didn't previously have a name for.
+
 A further, non-engine implication carried over from the original agent-composition finding: services reachable by an agent-directed (or any open-target) invocation cannot assume they are only ever invoked downstream of validation performed earlier in an authored DAG - such services need to validate their own inputs defensively, similar to a public API, rather than trusting pipeline context.
 
 **Rationale**: The technical mechanism for dynamic, non-terminating fan-out (a child/step-execution primitive) is already required for D8's map construct. Splitting "how a workflow is reused" (D9a: a workflow-store entity, reused by fork, unrelated to fan-out), "is nesting orchestrator-aware by default" (D9b, a policy decidable now), and "how is agent-directed nesting expressed" (D9c, a specific case of D9b rather than a fourth thing) avoids inventing separate machinery for what turns out to be, for D9b/D9c, the same underlying model applied twice - while D9a is deliberately a *different* mechanism (fork, not the child-execution primitive), because workflow-to-workflow reuse and dynamic fan-out are genuinely different problems.
@@ -588,7 +719,8 @@ CEL's advantages (richer typing, K8s-ecosystem familiarity) matter most for vali
 The funded UI project has its own, independently-timed release cadence, separate from the platform backend - meaning the UI could plausibly lag behind whatever IR version the backend is producing at any given moment. This is a structural consequence of two funded workstreams moving independently, not a hypothetical edge case, and it is why versioning needs an explicit answer now rather than being deferred until the UI project starts.
 
 ```
-VERSION TAG: a single, whole-document version field (e.g. irVersion: N),
+VERSION TAG: a single, whole-document version field, `irVersion: N`
+(locked as the actual field name by D8d, not merely an example),
 bumped only on BREAKING changes. Additive constructs (a new binding
 kind, a new step field with a sensible default) do NOT bump it.
 
@@ -777,11 +909,18 @@ Not applicable in the traditional sense - this is a net-new platform with no pri
 - **Execution engine selection (D6)**: Left deliberately open. Five candidate paths: (a) Temporal + a hand-built placement-resolver, (b) Temporal + Ray hybrid, (c) Restate as a single system, (d) Dapr (Workflows + Actors) as a single system, (e) a DBOS-shaped thin library over Postgres. Recommended next step is a short spike on the SQL-session scenario against Restate and Dapr specifically, in placement-bookkeeping-only mode (no service rewrites), run alongside the D9 policy decision rather than after it.
 - **Placement-bookkeeping vs. actor-hosting trade-off**: If Dapr (or a similar actor framework) is pursued, whether to use it only for durable placement bookkeeping (no service changes) or to additionally rewrite a narrow subset of genuinely setup-heavy services to embed the Actor SDK for true process affinity is a distinct, follow-on decision - not required to resolve D6 itself.
 - **Secrets broker product**: The secrets injection model is decided (D7), but the specific broker/store (e.g. Vault, a cloud secret manager, or an encrypted-at-rest store decrypted worker-side) is intentionally left open. The spec is written broker-agnostic.
-- **Dataset resource catalog product/implementation**: D8a decides that static datasets need their own tag→digest→storage-location catalog, conceptually parallel to the container/OCI registry but not the same system; the concrete implementation (bespoke service vs. adapting an existing artifact-registry product) is not yet chosen.
-- **Composition mechanism cost**: D9b decides the policy (mandatory-by-default, declared exceptions); the concrete SDK/mechanism cost of compliance remains coupled to the D6 engine decision.
+- **Dataset object storage product**: D8b decides the dataset catalog's byte store is dedicated object storage (not the artifact registry used for D12's `oci_ref`), mirroring D12's index/byte-store split; the specific product (S3, GCS, MinIO, etc.) is intentionally left open, same posture as the secrets-broker product.
+- **Nesting mechanism cost**: D9b decides the policy (mandatory-by-default, declared exceptions); the concrete SDK/mechanism cost of compliance remains coupled to the D6 engine decision.
 - **Outward-facing MCP exposure**: Exposing this platform's registry to arbitrary third-party agent hosts (distinct from D9c's internal agent-runner-as-a-step case) is a separate, real idea not designed here.
-
-**Resolved this round** (previously listed here as open; concrete decisions now captured in the Decisions section above): JSON-Logic vs. CEL (D10); service composability model - composite registry entries and the mandatory-by-default policy (D9a/D9b); agent-directed/MCP composition, unified as a specific case of the composability model rather than a separate design (D9c); authoring surface syntax - YAML/JSON restricted profile, `sessionState` declarations, `{from: item}`, `dependsOn`, flat request signatures, and the URN scheme for static dataset references (D8a).
 - **Placement-resolver/routing mechanism**: D4 decides that placement is fused from three sources and that affinity is optional, but not the concrete mechanism that routes an actual call to a specific service replica. Whether this is a bespoke resolver, a service-mesh consistent-hash policy, or a native engine primitive (D6 R11) depends materially on the D6 outcome.
+- **OCI-compliant registry product/topology for image bytes (D12)**: the service registry's metadata index is designed; the underlying byte-store product/deployment (e.g. Harbor, a cloud registry) is deferred, same posture as the secrets-broker product.
+- **Registry re-pin/upgrade flow (D12)**: moving an already-authored binding from a pinned digest to a newer build's digest is a real, deliberate authoring action - not yet designed.
+- **Workflow-spec store visibility/tenancy/publish-authority (D13)**: who may see, fork, or publish into a namespace is explicitly delegated to the external authoring tool, not solved on the platform.
+- **Fork-lineage-cycle handling (D13)**: a fork-lineage chain that loops is not currently detected or rejected; low-stakes (a fork is self-contained, so this cannot cause run-time expansion) but tracked as follow-up.
+- **IR-version-mismatch-on-fork (D13)**: surfacing a mismatch between a source workflow-spec's IR version and a forking author's own is delegated to the external authoring tool.
 
-**Resolved this round** (previously listed here as open; concrete decisions now captured in the Decisions section above): IR schema versioning/migration (D11); snapshot auto-promotion thresholds (D4a); capability declaration trust/validation (D5a); session snapshot retention for undo/time-travel (D3a). The exact numeric defaults in D4a and the specific conformance-test implementation in D5a remain tunable/to-be-implemented, but the model itself is no longer open.
+**Resolved this round** (previously listed here as open; concrete decisions now captured in the Decisions section above): JSON-Logic vs. CEL (D10); agent-directed/MCP nesting, unified as a specific case of the nesting model rather than a separate design (D9c); authoring surface syntax - YAML/JSON restricted profile, `sessionState` declarations, `{from: item}`, `dependsOn`, flat request signatures, and the URN scheme for static dataset references (D8a); IR schema versioning/migration (D11); snapshot auto-promotion thresholds (D4a); capability declaration trust/validation (D5a); session snapshot retention for undo/time-travel (D3a). The exact numeric defaults in D4a and the specific conformance-test implementation in D5a remain tunable/to-be-implemented, but the model itself is no longer open.
+
+**Resolved this round** (previously listed here as open; concrete decisions now captured in the Decisions section above): the authoring-surface syntax gaps left after D8a - step invocation (always a full image digest, never a mutable tag - D8c's asymmetry note vs. dataset tags), secret references as a block separate from data bindings, the `literal` binding kind, and both `branch`'s and `map`'s per-internal-sub-graph result-exposure mechanism (`yields`, generalizing the same flat-signature rule already governing top-level `outputs`) are now concretely spelled (D8c). The remaining authoring-surface work (tasks.md 1.7/5.x) is producing the formal JSON Schema from these decisions, not deciding further open syntax questions.
+
+**Resolved more recently** (superseding an earlier "resolved this round" entry from when D9a/D9b were first drafted): the service/workflow composability model has since been split into **compose** (workflow-spec reuse, exclusively by fork, D13 - superseding the originally-resolved "composite registry entries" framing) and **nest** (a service function calling other registered services, mandatory-by-default orchestrator-aware policy, D9b - unchanged in substance, renamed from "composition"). The service registry itself (D12) and the workflow-spec store (D13) are new first-party components specified this round, resolving what was previously an unspecified external dependency.

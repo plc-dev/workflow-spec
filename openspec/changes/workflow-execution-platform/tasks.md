@@ -9,7 +9,7 @@
 - [ ] 1.4 Decide the execution engine (design.md D6, open question) - resolve alongside 1.6 (secrets-broker fit, e.g. Dapr's native Secrets API) and 1.9 (composability cost), since both depend on the engine chosen
 - [ ] 1.5 Spike compiling a trivial hand-written workflow-spec into a generic, engine-agnostic IR interpreter targeting whichever engine is selected in 1.4
 - [ ] 1.6 Select a secrets-broker product against the broker-agnostic model in design.md D7 (open question)
-- [ ] 1.7 Decide and document the concrete authoring-surface syntax/grammar (open question from design.md D8)
+- [ ] 1.7 Produce the formal JSON Schema for the authoring-surface grammar decided in design.md D8a/D8c (step invocation, secrets, `literal` bindings, and `branch`/`map`'s `yields` mechanism) - no further open syntax decisions remain, this is transcription/tooling work
 - [ ] 1.8 Spike a dynamic map/forEach construct against the engine selected in 1.4 (design.md D8/D9)
 - [ ] 1.9 Decide the service-nesting policy (deferred, design.md D9): SDK-mediated only vs. permitting direct HTTP/CLI/MCP transports - resolve alongside 1.4
 - [ ] 1.10 Design the placement-resolver/routing mechanism (design.md D4/D6 Open Questions): bespoke resolver, service-mesh consistent-hash policy, or a native engine primitive, depending on the outcome of 1.4
@@ -67,10 +67,11 @@
 - [ ] 5.6a Implement the restricted-YAML/JSON parser + JSON Schema validation (no anchors/aliases/merge keys/custom tags; camelCase fields) per design.md D8a
 - [ ] 5.6b Implement the `{from: item}` binding source for map/forEach bodies
 - [ ] 5.6c Implement flat request-parameter binding validation (reject any dotted/nested path at the binding-source level)
-- [ ] 5.6d Implement the dataset URN parser/resolver (namespace/name, tag-or-digest) and stand up the dataset resource catalog (tag → digest → storage location), distinct from the container/OCI registry
+- [ ] 5.6d Implement the dataset URN parser/resolver (namespace/name, tag-or-digest) and stand up the dataset resource catalog: a thin tag→digest→object-key index backed by dedicated object storage (design.md D8b) - distinct from the container/OCI registry, and not itself an artifact-registry client
+- [ ] 5.6d-i Select the specific object storage product (S3/GCS/MinIO-compatible) for dataset bytes (open question, design.md D8b)
 - [ ] 5.6e Implement OCI reference validation for pinned service-version calls, rejecting dataset URNs used in that position and vice versa
-- [ ] 5.7 Implement `branch` construct (statically enumerated cases, dynamically selected)
-- [ ] 5.8 Implement `map`/`forEach` construct (statically shaped body, dynamically sized cardinality)
+- [ ] 5.7 Implement `branch` construct (statically enumerated cases, dynamically selected), including per-case `yields` resolution and rejection of direct references to a case's internal step ids (design.md D8c)
+- [ ] 5.8 Implement `map`/`forEach` construct (statically shaped body, dynamically sized cardinality), including `yields` collection into parallel arrays and rejection of direct references to body-internal step ids (design.md D8c)
 - [ ] 5.9 Implement derived workflow-signature generation and publish it through the workflow-spec store's discovery mechanism (see 11.2) - not the service registry, which indexes service images only
 - [ ] 5.10 Implement IR-to-execution-engine compilation targeting the generic interpreter from 1.5, once the engine is selected (1.4)
 - [ ] 5.11 Choose JSON-Logic vs. CEL against real branch/map cases (open question, design.md D10)

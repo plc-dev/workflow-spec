@@ -25,6 +25,17 @@ The scheduler MAY route a step to a specific worker holding relevant warm state 
 - **WHEN** a worker already holds the relevant warm snapshot for a step
 - **THEN** the scheduler SHOULD prefer routing the step to that worker to avoid rehydration cost
 
+### Requirement: A literal-bound nesting allowlist feeds the admission model as candidates, never as unconditional pre-warming
+Where an open-target nesting step's allowlist is supplied as a `literal` binding (per `workflow-dsl`), the scheduler MAY treat the functions named in that allowlist as candidates for the same promotion/admission model governing other bindings. The scheduler SHALL NOT be required to unconditionally pre-warm or pool every allowlisted function regardless of likely use.
+
+#### Scenario: Allowlisted functions are admission-model candidates, not automatically pre-warmed
+- **WHEN** an open-target nesting step's literal-bound allowlist names several functions
+- **THEN** the scheduler MAY consider each named function a promotion candidate under the existing admission model, and SHALL NOT be required to pre-warm all of them unconditionally
+
+#### Scenario: Unused capacity is not consumed by an unused allowlist entry
+- **WHEN** an allowlisted function is never actually invoked during a given execution
+- **THEN** the scheduler SHALL NOT be required to have reserved warm/pooled capacity for it on that basis alone
+
 ### Requirement: Adaptive residency promotion
 The scheduler SHALL be permitted to start a binding's state in a rehydrate-anywhere (unpinned) residency mode and promote it to a pinned/warm residency mode based on observed size and access frequency, without requiring the workflow-writer to declare this threshold in the DSL.
 
