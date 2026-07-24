@@ -86,7 +86,29 @@ The system SHALL derive, from a workflow-spec's IR, a signature consisting of: t
 
 #### Scenario: Signature published for discovery
 - **WHEN** a workflow-spec's signature has been derived
-- **THEN** the system SHALL make it discoverable to callers (e.g. the frontend) through the same registry/discovery mechanism used for service OpenAPI specifications
+- **THEN** the system SHALL make it discoverable to callers (e.g. the frontend) through the workflow-spec store's discovery mechanism (see `workflow-spec-store`) - not through the service registry, which indexes service images only
+
+### Requirement: A step invokes a registered service function; workflow-to-workflow reuse is not a step-level construct
+A step SHALL be defined as an invocation of a discoverable function of a registered service image. The DSL SHALL NOT provide a step kind that references another workflow-spec at run time; reuse of one workflow-spec by another happens by forking at authoring time (see `workflow-spec-store`), which produces an ordinary, self-contained workflow-spec whose steps are indistinguishable, at the DSL/IR level, from steps authored directly.
+
+#### Scenario: A forked workflow-spec's steps are ordinary steps
+- **WHEN** a workflow-spec was produced by forking another workflow-spec
+- **THEN** its steps SHALL be defined the same way as any directly-authored step (an invocation of a registered service function), with no residual step-level dependency on the source workflow-spec
+
+#### Scenario: There is no run-time reference to another workflow-spec
+- **WHEN** a workflow-spec is compiled to IR
+- **THEN** the IR SHALL NOT contain a reference to another workflow-spec's identity that requires resolution at run time; any relationship to a source workflow-spec is fork-lineage metadata external to the IR (see `workflow-spec-store`), not a binding or step
+
+### Requirement: A concrete nesting target is supplied as an ordinary DSL binding, not a registry-level declaration
+Where a registered service's function declares (via its `nesting_declaration` capability metadata, see `service-registry`) that it may nest other services' functionality, the DSL SHALL allow the concrete function(s) that fill that nesting to be supplied as ordinary parameter bindings of the step invoking that function - not as a separate, nesting-specific DSL construct.
+
+#### Scenario: An enumerable nesting target is bound like any other parameter
+- **WHEN** a step invokes a function whose `nesting_declaration` specifies an enumerable target set
+- **THEN** the concrete function(s) it nests SHALL be supplied via the step's ordinary parameter bindings, validated by the same generic required-parameter rule as any other binding
+
+#### Scenario: An open nesting target's allowlist is an ordinary required parameter
+- **WHEN** a step invokes a function whose `nesting_declaration` specifies an open target set (e.g. an agent-runner)
+- **THEN** the allowlist and governor SHALL be supplied as ordinary required parameters of that function's signature, per the generic required-parameter validation rule, with no agent-specific or nesting-specific DSL construct
 
 ### Requirement: Branch construct with statically enumerable cases
 The DSL SHALL support a branch construct that selects one of several statically declared sub-graphs to execute based on a runtime value, and SHALL require every possible case (including a default) to be declared in the IR even though only one is executed per run.
@@ -180,8 +202,8 @@ The DSL SHALL validate, for every step, that a binding is supplied for each para
 - **WHEN** a step invokes a function that declares a required parameter, and the workflow-spec supplies no binding for it
 - **THEN** the DSL SHALL reject the workflow-spec
 
-#### Scenario: A composing service's allowlist and governor are required parameters, not a special construct
-- **WHEN** a step invokes a registered service whose signature declares `allowedTools` and `governor` as required parameters (e.g. an agent-runner service composing other services per an "open" target declaration - see the `service-composability` capability)
+#### Scenario: A nesting service's allowlist and governor are required parameters, not a special construct
+- **WHEN** a step invokes a registered service whose signature declares `allowedTools` and `governor` as required parameters (e.g. an agent-runner service nesting other services per an "open" target declaration - see the `service-nesting` capability)
 - **THEN** this generic rule alone SHALL require the workflow-writer to supply both bindings, with no DSL-level construct specific to agents or allowlists
 
 ### Requirement: IR carries a whole-document version tag with forward-only, lazy migration

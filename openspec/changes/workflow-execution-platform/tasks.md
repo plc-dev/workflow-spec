@@ -11,18 +11,25 @@
 - [ ] 1.6 Select a secrets-broker product against the broker-agnostic model in design.md D7 (open question)
 - [ ] 1.7 Decide and document the concrete authoring-surface syntax/grammar (open question from design.md D8)
 - [ ] 1.8 Spike a dynamic map/forEach construct against the engine selected in 1.4 (design.md D8/D9)
-- [ ] 1.9 Decide the service-composability policy (deferred, design.md D9): SDK-mediated only vs. permitting direct HTTP/CLI/MCP transports - resolve alongside 1.4
+- [ ] 1.9 Decide the service-nesting policy (deferred, design.md D9): SDK-mediated only vs. permitting direct HTTP/CLI/MCP transports - resolve alongside 1.4
 - [ ] 1.10 Design the placement-resolver/routing mechanism (design.md D4/D6 Open Questions): bespoke resolver, service-mesh consistent-hash policy, or a native engine primitive, depending on the outcome of 1.4
 
-## 2. Registry & service capability metadata
+## 2. Service registry
 
-- [ ] 2.1 Extend the OpenAPI/registry schema to carry per-function capability metadata: mutates, materialization-cost-class, COW-support, change-detection-support
-- [ ] 2.2 Add registry validation for capability metadata (schema-level checks)
-- [ ] 2.3 Backfill capability metadata for existing service images
+- [ ] 2.1 Design and build the service-registry metadata index (design.md D12): per-image-digest OpenAPI contract as the sole stored contract (CLI/MCP surfaces projected from it, never stored separately), `oci_ref` pointer into a standard OCI-compliant registry (byte storage itself deferred)
+- [ ] 2.1a Extend the entry schema to carry per-function capability metadata: mutates, materialization-cost-class, COW-support, change-detection-support (design.md D5)
+- [ ] 2.1b Extend the entry schema to carry per-image hardware requirements (cpu/mem/gpu/node-class), explicitly outside the capability trust-tier model (design.md D12)
+- [ ] 2.1c Extend the entry schema to carry a per-function `nesting_declaration` (transport + enumerable/open targets) recording only the possibility of nesting, not the concrete bound target (design.md D9b/D12)
+- [ ] 2.2 Add registry validation for capability/hardware/nesting metadata (schema-level checks)
+- [ ] 2.3 Backfill capability, hardware, and nesting metadata for existing service images
 - [ ] 2.4 Define conformance checks/tests to validate declared capabilities against actual service behavior (trust boundary from design.md)
 - [ ] 2.5 Implement capability declaration trust tiers keyed to image digest (unverified / conformance-passed / production-proven, design.md D5a)
 - [ ] 2.6 Gate conformance re-checks into CI/CD on every service redeploy, not just first registration (design.md D5a)
 - [ ] 2.7 Implement a continuous runtime invariant checker sampling shared/immutable bindings for cross-caller divergence, with auto-demotion + alerting on violation (design.md D5a)
+- [ ] 2.8 Implement an atomic `getPlacementFacts(digest, function)` read returning capability metadata, trust tier, and hardware requirements together, so callers never observe them skewed relative to one another (design.md D12)
+- [ ] 2.9 Implement digest-pinned resolution for workflow-spec step bindings at authoring time (design.md D12)
+- [ ] 2.10 Implement privilege-split write paths: `registerImage` reachable only by platform developers; `recordTrustTier` reachable by the workflow platform's own conformance pipeline, not requiring developer involvement per update (design.md D12)
+- [ ] 2.11 Design the deferred re-pin/upgrade flow for moving an already-authored binding to a newer image digest (design.md D12, noted as a real but not-yet-designed affordance)
 
 ## 3. Session & state layer
 
@@ -64,7 +71,7 @@
 - [ ] 5.6e Implement OCI reference validation for pinned service-version calls, rejecting dataset URNs used in that position and vice versa
 - [ ] 5.7 Implement `branch` construct (statically enumerated cases, dynamically selected)
 - [ ] 5.8 Implement `map`/`forEach` construct (statically shaped body, dynamically sized cardinality)
-- [ ] 5.9 Implement derived workflow-signature generation and publish it through the registry/discovery mechanism
+- [ ] 5.9 Implement derived workflow-signature generation and publish it through the workflow-spec store's discovery mechanism (see 11.2) - not the service registry, which indexes service images only
 - [ ] 5.10 Implement IR-to-execution-engine compilation targeting the generic interpreter from 1.5, once the engine is selected (1.4)
 - [ ] 5.11 Choose JSON-Logic vs. CEL against real branch/map cases (open question, design.md D10)
 - [ ] 5.12 Implement `compute` binding evaluation (in-interpreter, no step-execution scheduling, no secret inputs permitted)
@@ -120,16 +127,30 @@
 - [ ] 9.7 Exclude secret-consuming external calls (including LLM/agent API calls) from the memoization cache (wire into 3.8)
 - [ ] 9.8 End-to-end test: pooled container serving different workflows never observes a foreign secret
 
-## 10. Service composability
+## 10. Service nesting
 
-- [ ] 10.1 Implement composite registry entries: publish a workflow-spec's derived signature as an invocable entry alongside leaf services (design.md D9a)
-- [ ] 10.2 Extend capability metadata (2.1) with a `composes: { via: sdk|http|cli|mcp, targets: [...] | open }` field (design.md D9b)
-- [ ] 10.3 Implement the mandatory-by-default orchestrator-aware composition path for services that declare `composes`
+- [ ] 10.2 Wire the registry's `nesting_declaration: { via: sdk|http|cli|mcp, targets: [...] | open }` field (2.1c) into the nesting-enforcement layer (design.md D9b)
+- [ ] 10.3 Implement the mandatory-by-default orchestrator-aware nesting path for services that declare `nesting_declaration`
 - [ ] 10.4 Implement the declared-exception path for services that bypass the orchestrator-aware path, wired into trust-tier review (2.5-2.7, design.md D5a/D9b)
-- [ ] 10.5 Implement dispatch-time allowlist enforcement and secret withholding for open-target composing services (design.md D9c)
+- [ ] 10.5 Implement dispatch-time allowlist enforcement and secret withholding for open-target nesting services (design.md D9c)
 - [ ] 10.6 Implement the durable governor counter (count/cost/timeout), checked before each dispatch, surviving crash-and-resume (design.md D9c)
 - [ ] 10.7 Exempt pure `compute`-backed tools from allowlist review (design.md D9c)
 - [ ] 10.8 Implement the MCP gateway: translate an invocation's allowlisted OpenAPI operations into scoped MCP tool definitions, routing calls through 10.5/10.6 (design.md D9c)
-- [ ] 10.9 End-to-end test: a composite registry entry invoked as a step executes as a tracked child execution with full guarantee coverage
-- [ ] 10.10 End-to-end test: an agent-runner service (`composes: {via: mcp, targets: open}`) refuses an out-of-allowlist call and halts at its governor limit, surviving a mid-loop crash without resetting the counter
+- [ ] 10.10 End-to-end test: an agent-runner service (`nesting_declaration: {via: mcp, targets: open}`) refuses an out-of-allowlist call and halts at its governor limit, surviving a mid-loop crash without resetting the counter
 - [ ] 10.11 End-to-end test: an undeclared direct-transport bypass is detected and treated as a capability-declaration violation (design.md D5a)
+
+## 11. Workflow-spec store
+
+- [ ] 11.1 Implement the workflow-spec store: URN identity (`urn:workflow-platform:workflow:ns/name[:tag|@digest]`) + immutable-version keying, storing a workflow-spec's IR + authoring doc (design.md D13)
+- [ ] 11.2 Implement derived-signature discovery/query surface for published workflow-specs (design.md D13; consumed by 5.9)
+- [ ] 11.3 Implement the fork operation: copy a source workflow-spec's shape/steps into a new, self-contained workflow-spec under the forking writer's namespace (design.md D9a/D13)
+- [ ] 11.4 Implement the immutable, transitive fork-lineage pin (`forkedFrom: urn:...@version`), inspectable through chained forks, never a run-time resolution dependency (design.md D13)
+- [ ] 11.5 Implement the hard platform invariant: writer-scoped secret references inherited from a source workflow-spec do not resolve under the forking writer's identity; treat as an unsatisfied binding until re-bound (design.md D7/D13)
+- [ ] 11.6 Confirm static-dataset references carry over unchanged on fork by default, with no platform-level namespace/visibility gating (design.md D13)
+- [ ] 11.7 Confirm dynamic `map`/`forEach` fan-out continues to use tracked child executions, unrelated to and unaffected by forking (design.md D8/D9a/D13)
+- [ ] 11.8 Document fork-lineage-cycle handling as a known, deferred, non-execution-affecting limitation (design.md D13)
+- [ ] 11.9 Define how the (external) authoring tool surfaces an IR-version mismatch between a source workflow-spec and a forking writer's own work, rather than the platform silently migrating or rejecting (design.md D11/D13)
+- [ ] 11.10 Document that visibility/tenancy/publish-authority are explicitly delegated to the external authoring tool and are not enforced by the platform (design.md D13)
+- [ ] 11.11 End-to-end test: a fork is self-contained and executes correctly with no run-time dependency on its source workflow-spec, even after the source publishes a new version
+- [ ] 11.12 End-to-end test: a fork containing an unresolved inherited writer-scoped secret reference is treated as an unsatisfied binding; re-binding it to the forking writer's own secret makes the fork valid
+- [ ] 11.13 End-to-end test: fork lineage remains inspectable and transitive across a chain of forks

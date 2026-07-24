@@ -23,7 +23,7 @@ Both worlds exist simultaneously across the service catalog, decided per-invocat
 - Inject secrets into steps, scoped by ownership, without leaking across the isolation boundary or into durable execution history.
 - Separate the DSL's authoring surface from a stable intermediate representation (IR), so authoring syntax can evolve or be plural without destabilizing the runtime contract, and so the underlying execution engine can be selected - or changed - independently of the DSL.
 - Support real-world control-flow needs (conditional branching, dynamic-cardinality iteration, and bounded agent-directed composition) while keeping the IR as statically analyzable as possible for the scheduler.
-- Leave the concrete authoring syntax/grammar, the specific secrets-broker product, the service-composability model, and the execution engine itself as explicit follow-ups (not fully solved here).
+- Leave the concrete authoring syntax/grammar, the specific secrets-broker product, the service-nesting model, and the execution engine itself as explicit follow-ups (not fully solved here).
 
 **Non-Goals:**
 - Defining the concrete authoring surface syntax/grammar (tracked as an open question / follow-on design).
@@ -458,7 +458,14 @@ This implies a **dataset resource catalog** (tag → digest → storage location
 
 **Alternatives considered**: A bespoke dotted-path syntax for `request` parameters (rejected - would create a second path-expression language alongside JSON-Logic's, for no added expressiveness). A custom URI scheme like `dataset://...` for static refs (rejected in favor of a formal URN - a custom scheme still gestures at being a fetchable location the way `http://` does, which is a smaller but similar overclaim to using OCI syntax outright). Reusing literal OCI reference syntax for datasets (rejected - see above; the pattern is worth keeping, the literal format is not). Bare UUIDs as the primary static reference form (rejected - globally unique but not human-readable, losing namespace/hierarchy context that a URN retains).
 
-### D9: Service composability - composite registry entries, a mandatory-by-default policy, and agent-directed composition as one case of it
+### D9: Compose vs. nest - workflows are *composed* (in the workflow-spec store), services *nest* other services (a mandatory-by-default policy), and agent-directed nesting is one case of it
+
+**Terminology, disentangled.** Two things earlier drafts of this decision conflated under "composability" are now split into distinct words, because they are distinct activities with distinct owners and distinct storage:
+
+- **Compose** = building a *workflow* out of steps over service functionality. The workflow *is* the composite. This is a workflow-writer activity, expressed in the DSL, and a workflow-spec is a first-class entity stored in the **workflow-spec store** (D13) - *never* a registry entry.
+- **Nest** = a *service function*, while executing, invoking *other* registered services' functionality from inside its own container code. This is a service-author-declared *possibility* (recorded in the registry as D12's `nesting_declaration`) whose *concrete* target is bound at the workflow-spec/DSL level.
+
+D9a below is revised accordingly (workflows are not "composite registry entries"); D9b/D9c concern *nesting* specifically and are framed in that vocabulary. The forward-note in D12 flagging this reconciliation as pending is resolved by this rework together with D13.
 
 A durable-execution engine's child/step-execution primitive - a running workflow can start one or many additional tracked executions, including dynamically and in a loop, without the parent terminating, with each getting its own durable tracking, retries, and secret/placement resolution - is the general mechanism behind D8's map construct, and is available generally wherever a unit of work needs to fan out dynamically without leaving the orchestrator's visibility. (The concrete shape of this primitive is engine-dependent - see D6 R11/R12 - native child-workflow-style constructs, actor-to-actor calls, and uniform durable invocations are the three shapes considered.)
 
@@ -482,13 +489,13 @@ This surfaced a broader question during design: what happens when a trusted serv
 
 This has since resolved into three concrete decisions, unresolved only in the mechanism's engine-dependent cost (D6).
 
-**D9a: Composite registry entries.** A registry entry may be either a **leaf** (a raw container, as today) or a **composite** - itself a workflow-spec, published under an invocable identity via its derived signature (D8), executed as a tracked child execution when invoked as a step. This required no new mechanism: a composite's internals are ordinary IR, resolved through the exact same scheduler/capability/secret pipeline as any top-level workflow. There is no "transport" question for this case at all, because a composite never leaves the orchestrated pipeline - it is simply a workflow-spec referenced by another workflow-spec.
+**D9a: Workflows are workflow-store entities, reused by fork - not registry entries.** A workflow-spec that another workflow-writer wants to reuse is *not* published as a registry entry (the registry holds service images only, D12). It lives in the **workflow-spec store** (D13) under a URN identity + immutable version, exposing its derived signature (D8) exactly as a service exposes its OpenAPI signature. Reuse works by **fork**, not by a live reference: the source workflow-spec's shape and steps are copied into the forker's own namespace at authoring time, producing a self-contained workflow-spec with an immutable lineage pin back to the exact source version - never a runtime dependency on the source, and never an inherited writer-scoped secret (D13 explains why: D7's secret-scoping boundary cannot be honored by a live reference without either crossing a writer-identity boundary or complicating every consumer's signature). *Dynamic* fan-out (D8's map/forEach, whose cardinality is unknown until run time) is unrelated to this and continues to use the child/step-execution primitive described above - forking is purely about workflow-to-workflow reuse, not about fan-out. This reverses the earlier "composite registry entry" framing entirely: there is no runtime resolution of one workflow-spec by another at all now, only an authoring-time copy with a lineage pin (see D13 for the full model, including the deferred visibility/tenancy, lineage-cycle, and IR-version-mismatch-on-fork questions).
 
-**D9b: Inter-service composition is mandatory-by-default; bypass requires a declared, reviewed exception.** For the harder case - a leaf service's own container code wanting to call *other* registered services on its own initiative (shape (a)/(b) above) - the default is orchestrated (b), not hidden (a). This extends a pattern already used repeatedly in this design (D4/D4a: affinity is optional but never silent; D5a: trust is earned, not assumed): the safe path is the default; the risky path is never a silent per-container choice. A service that wants to bypass the orchestrator-aware path must declare it explicitly (transport + forfeited guarantees named), and that declaration is subject to the same trust-tier review as any other capability claim (D5a) - it is not trusted on assertion alone. This is a **policy** decision, decidable now; only the **mechanism cost** of compliance (how expensive the orchestrator-aware SDK is to adopt) stays coupled to D6, since that varies materially by engine family (Temporal's separate child-workflow SDK vs. Restate/Dapr's "same primitive as any other call").
+**D9b: Inter-service nesting is mandatory-by-default; bypass requires a declared, reviewed exception.** For the harder case - a leaf service's own container code wanting to call *other* registered services on its own initiative (shape (a)/(b) above) - the default is orchestrated (b), not hidden (a). This extends a pattern already used repeatedly in this design (D4/D4a: affinity is optional but never silent; D5a: trust is earned, not assumed): the safe path is the default; the risky path is never a silent per-container choice. A service that wants to bypass the orchestrator-aware path must declare it explicitly (transport + forfeited guarantees named), and that declaration is subject to the same trust-tier review as any other capability claim (D5a) - it is not trusted on assertion alone. This is a **policy** decision, decidable now; only the **mechanism cost** of compliance (how expensive the orchestrator-aware SDK is to adopt) stays coupled to D6, since that varies materially by engine family (Temporal's separate child-workflow SDK vs. Restate/Dapr's "same primitive as any other call").
 
-A composing service's capability declaration (extending D5) records whether its reachable target set is **enumerable** (a fixed list, known at registration) or **open** (determined per-invocation by an external decision process), plus the transport: `composes: { via: sdk | http | cli | mcp, targets: [...] | open }`.
+A nesting service's capability declaration (D12's `nesting_declaration`, extending D5) records whether its reachable target set is **enumerable** (a fixed list, known at registration) or **open** (determined per-invocation by an external decision process), plus the transport: `nesting_declaration: { via: sdk | http | cli | mcp, targets: [...] | open }`.
 
-**D9c: Agent-directed composition is the `targets: open, via: mcp` case of D9b - not a separate IR construct.** An "agent-directed step" is not a distinct kind of step. It is an ordinary step invoking an ordinary registered service (an "agent-runner") whose own capability declaration is `composes: { via: mcp, targets: open }`. This collapses what earlier looked like bespoke agent machinery into the generic model:
+**D9c: Agent-directed nesting is the `targets: open, via: mcp` case of D9b - not a separate IR construct.** An "agent-directed step" is not a distinct kind of step. It is an ordinary step invoking an ordinary registered service (an "agent-runner") whose own capability declaration is `nesting_declaration: { via: mcp, targets: open }`. This collapses what earlier looked like bespoke agent machinery into the generic model:
 
 ```
    ALLOWLIST AND GOVERNOR ARE ORDINARY REQUIRED PARAMETERS, not new IR:
@@ -498,11 +505,11 @@ A composing service's capability declaration (extending D5) records whether its 
    every required parameter" rule (workflow-dsl) enforces "you must
    supply an allowlist and a governor" with no agent-specific validation.
 
-   ENFORCEMENT happens in the composability layer (D9b), not the DSL:
-   the layer refuses out-of-allowlist calls and withholds secrets for
-   them at DISPATCH TIME, regardless of the agent-runner's own behavior -
-   the same dispatch-time enforcement any open-target composing service
-   needs, not something bespoke to agents.
+   ENFORCEMENT happens in the nesting-enforcement layer (D9b), not the
+   DSL: the layer refuses out-of-allowlist calls and withholds secrets
+   for them at DISPATCH TIME, regardless of the agent-runner's own
+   behavior - the same dispatch-time enforcement any open-target
+   nesting service needs, not something bespoke to agents.
 
    THE GOVERNOR MUST BE DURABLE: its accumulated count/cost is checked
    before each dispatch and persists across a crash-and-resume, or
@@ -520,18 +527,18 @@ A composing service's capability declaration (extending D5) records whether its 
    operations into MCP tool definitions dynamically, scoped per
    invocation to that invocation's allowlist, and routes every tool
    call back through the same dispatch/secret/governor path as any
-   other composed call - never a parallel bypass path. This also means
+   other nested call - never a parallel bypass path. This also means
    REST, CLI, and MCP become three projections of the same registry
    entry + OpenAPI contract, not three independently maintained surfaces.
 ```
 
-**Who drives the agent loop, resolved**: because the agent-runner is *a service*, invoked as *a step*, its execution lifecycle is ours end-to-end by construction, the same as any composing service - this settles in favor of the platform hosting the loop as part of step execution, not an externally-hosted agent driving it from outside. A genuinely different idea - exposing the registry *outward* as an MCP server to arbitrary third-party agent hosts (not a step inside any of our workflows at all) - remains a distinct, not-currently-in-scope product surface, noted here so it isn't confused with what D9c actually decides.
+**Who drives the agent loop, resolved**: because the agent-runner is *a service*, invoked as *a step*, its execution lifecycle is ours end-to-end by construction, the same as any nesting service - this settles in favor of the platform hosting the loop as part of step execution, not an externally-hosted agent driving it from outside. A genuinely different idea - exposing the registry *outward* as an MCP server to arbitrary third-party agent hosts (not a step inside any of our workflows at all) - remains a distinct, not-currently-in-scope product surface, noted here so it isn't confused with what D9c actually decides.
 
 A further, non-engine implication carried over from the original agent-composition finding: services reachable by an agent-directed (or any open-target) invocation cannot assume they are only ever invoked downstream of validation performed earlier in an authored DAG - such services need to validate their own inputs defensively, similar to a public API, rather than trusting pipeline context.
 
-**Rationale**: The technical mechanism for dynamic, non-terminating fan-out (a child/step-execution primitive) is already required for D8's map construct. Splitting "is a registry entry composite" (D9a, free), "is composition orchestrator-aware by default" (D9b, a policy decidable now), and "how is agent-directed composition expressed" (D9c, a specific case of D9b rather than a fourth thing) avoids inventing separate machinery for what turns out to be the same underlying model applied three ways.
+**Rationale**: The technical mechanism for dynamic, non-terminating fan-out (a child/step-execution primitive) is already required for D8's map construct. Splitting "how a workflow is reused" (D9a: a workflow-store entity, reused by fork, unrelated to fan-out), "is nesting orchestrator-aware by default" (D9b, a policy decidable now), and "how is agent-directed nesting expressed" (D9c, a specific case of D9b rather than a fourth thing) avoids inventing separate machinery for what turns out to be, for D9b/D9c, the same underlying model applied twice - while D9a is deliberately a *different* mechanism (fork, not the child-execution primitive), because workflow-to-workflow reuse and dynamic fan-out are genuinely different problems.
 
-**Alternatives considered**: Treating agent-directed composition as a distinct IR construct with its own allowlist/governor validation (rejected - fully subsumed by D9b's generic composability model plus the DSL's already-generic required-parameter rule, with nothing lost). Treating composability as purely a service-author concern outside the platform's model (rejected as a permanent stance - D9b's mandatory-by-default policy, backed by D5a's trust tiers, closes this). Allowing agent-directed steps unrestricted registry access (rejected - the allowlist requirement keeps D7's secret-scoping model intact). Exposing the registry outward to third-party agent hosts as an alternative to D9c (not rejected, but explicitly out of scope here - a distinct product surface, not a variant of this decision).
+**Alternatives considered**: Treating agent-directed nesting as a distinct IR construct with its own allowlist/governor validation (rejected - fully subsumed by D9b's generic nesting model plus the DSL's already-generic required-parameter rule, with nothing lost). Treating nesting as purely a service-author concern outside the platform's model (rejected as a permanent stance - D9b's mandatory-by-default policy, backed by D5a's trust tiers, closes this). Allowing agent-directed steps unrestricted registry access (rejected - the allowlist requirement keeps D7's secret-scoping model intact). Exposing the registry outward to third-party agent hosts as an alternative to D9c (not rejected, but explicitly out of scope here - a distinct product surface, not a variant of this decision). Publishing a workflow-spec as a registry entry, as originally framed in D9a (rejected on reflection - conflated two different kinds of thing, a service image and a workflow-spec, under one storage model; see the terminology split above and D13).
 
 ### D10: Pure, bounded computation is a `compute` binding evaluating a serializable logic expression - never embedded imperative code
 
@@ -607,6 +614,145 @@ Deliberately simpler than Kubernetes' storage-version/served-version split: that
 **Rationale**: Answers the "IR schema versioning/migration" open question left by D8, specifically motivated by the UI project's independent timeline rather than treated as a generic best practice to defer indefinitely.
 
 **Alternatives considered**: Per-construct versioning (rejected for now - adds complexity with no clear benefit while the IR is authored/synthesized as a whole document per workflow-spec, not assembled from independently-versioned fragments). Kubernetes-style multi-version serving (rejected as premature - the operational cost isn't justified until there's a concrete need for the runtime to serve more than one IR version at a time).
+
+### D12: The service registry is a first-party metadata index, not an image byte store
+
+Every prior decision that touches "the registry" (D5's capability metadata, D5a's trust tiers, D9's composition declarations, `workflow-dsl`'s function/parameter validation, `execution-scheduling`'s placement inputs) has treated it as an existing, external, unspecified dependency. It has no owner and no defined schema or query contract anywhere in this change, despite being the single most-depended-on component in the whole design. This decision brings it into scope as a first-party capability, `service-registry` (see `specs/service-registry/spec.md`), rather than continuing to assume it.
+
+**Scope: a metadata index, not an image store.** The registry owns facts *about* a service image, keyed by that image's digest; it does not own the image bytes themselves. Each entry carries an `oci_ref` pointer into a standard OCI-compliant registry (product/deployment topology deferred, same posture as D7's secrets-broker-product deferral) - byte storage, pull auth, replication, and image GC stay out of scope for this component, exactly as D6's engine selection and D7's secrets-broker product are deferred elsewhere in this design.
+
+```
+   ENTRY (per-image build, keyed by digest)
+   ├─ openapi_spec         SOLE STORED CONTRACT. CLI and MCP tool
+   │                       surfaces are projected from it at read time
+   │                       (per D9c/design line ~524) - never stored
+   │                       separately, so the three surfaces cannot drift.
+   ├─ capability_metadata  per-FUNCTION (D5): mutates?, materialization-
+   │                       cost-class, COW-support, change-detection
+   ├─ trust_tier           per-DIGEST (D5a): unverified / conformance-
+   │                       passed / production-proven
+   ├─ hardware_requirements per-IMAGE (cpu/mem/gpu/node-class) - a
+   │                       performance/placement fact, deliberately
+   │                       OUTSIDE the D5a trust-tier model: a false
+   │                       declaration here is a bin-packing/OOM problem,
+   │                       not an isolation-correctness one, so it is
+   │                       corrected by observation (D4's runtime-
+   │                       observed characteristics), not by conformance
+   │                       probes
+   ├─ nesting_declaration  per-FUNCTION: does this function's own
+   │                       container code call other registered
+   │                       services' functionality? If so: transport
+   │                       (`sdk|http|cli|mcp`) and target shape
+   │                       (`enumerable: [...]` | `open`). This is the
+   │                       *possibility* only, declared by the service
+   │                       author - the schema-level home for what D9b
+   │                       currently names `composes:` (naming to be
+   │                       reconciled - see note below). The *concrete*
+   │                       nested function a given workflow wires in is
+   │                       a DSL-level binding, not a registry fact.
+   └─ oci_ref              pointer to the image in a standard OCI
+                           registry; byte storage itself is deferred
+```
+
+**Resolution pins a digest at authoring time.** A workflow-spec step binds to a specific image digest when authored, not a mutable tag. This keeps a workflow's earned trust tier (D5a) stable and predictable for its lifetime - a later redeploy produces a new digest that starts over at `unverified` (per D5a's existing rule) without silently affecting any workflow-spec authored against the prior build. The direct consequence - a pinned workflow never automatically inherits a newer build's fixes - is accepted here; an explicit re-pin/upgrade flow (an author deliberately moving a binding to a new digest) is a real, deferred affordance, not yet designed.
+
+**Reads are split by consistency need.** Authoring-time reads (existence/signature lookups for DSL validation and discovery) are interactive and cacheable. Dispatch-time reads are hot-path and correctness-critical: `getPlacementFacts(digest, function)` returns capability metadata, trust tier, and hardware requirements as **one atomic read**, so the scheduler never sees these three facts skewed relative to one another (e.g. a trust demotion landing between two separate reads).
+
+**Writes are split by privilege, not merely by operation.** Two distinct write paths, deliberately gated to different actors:
+
+```
+registerImage(digest, openapi_spec, capability_metadata,
+              hardware_requirements, nesting_declaration, oci_ref)
+    -> PLATFORM DEVELOPERS ONLY. The workflow-platform runtime has
+       no path to call this - it can never introduce a new image.
+
+recordTrustTier(digest, tier)
+    -> the WORKFLOW PLATFORM (its conformance/CI pipeline, D5a/
+       tasks 2.4-2.7) - the runtime can promote/demote trust on an
+       already-registered image, never register one.
+```
+
+This makes an important invariant structural rather than a policy convention: the set of images that can ever be invoked is entirely developer-curated; the runtime's only authority over that set is annotating trust on top of it.
+
+**Registry entries are service images only.** A registry entry never contains a workflow-spec. What D9a originally called a "composite registry entry" is superseded: workflows are a distinct kind of thing from services (see the compose/nest terminology note below), stored and reused entirely through the separate workflow-spec store (D13, via forking, not a live reference) - never through this registry. This decision fixes that *this* component, the service registry, is scoped to service images; D13 specifies the workflow-spec store itself.
+
+**Rationale**: Splitting by consistency need (authoring vs. dispatch reads) and by privilege (register vs. trust-tier writes) follows the same pattern already used repeatedly in this design (D4/D4a: affinity is optional but never silent; D5a: trust is earned, not assumed; D9b: the safe path is the default) - draw the boundary where the actual risk or cost differs, rather than exposing one undifferentiated read/write surface.
+
+**Alternatives considered**: Storing image bytes as part of this component (rejected - byte storage, pull auth, and replication are a solved, product-agnostic problem, same posture as deferring the secrets-broker product in D7; only the metadata/index layer is genuinely specific to this platform). A separately-authored MCP spec alongside OpenAPI (rejected - see D9c/design line ~524; a second stored contract can drift from the OpenAPI source of truth, which is exactly the risk D9c's "three projections" framing was written to avoid). Per-function hardware requirements (rejected for now as unnecessarily fine-grained relative to actual need; revisit if a service's functions turn out to have materially different resource profiles in practice). Tag-based (rather than digest-based) step resolution (rejected - would let a redeploy silently change a workflow's effective trust tier underneath an already-authored spec, undermining D5a's per-build trust model).
+
+**Resolved by D9/D13**: the compose/nest terminology split flagged here as pending is now resolved - D9 has been reworked to use "compose" only for workflows (stored and reused-by-fork in the workflow-spec store, D13) and "nest" only for a service function invoking other services, matching this decision's `nesting_declaration` field name. The `service-composability` capability spec has likewise been renamed to `service-nesting` and aligned with this vocabulary.
+
+### D13: The workflow-spec store is a first-party component; reuse is by fork, not by live reference
+
+D9a originally treated a workflow-spec, published under an invocable identity, as a kind of registry entry (a "composite"). Splitting compose from nest (D9's terminology rework, above) means a workflow-spec is never a registry entry - it needs its own first-party home. This decision specifies that home: the **workflow-spec store** (see `specs/workflow-spec-store/spec.md`), and the model by which one workflow reuses another.
+
+> **Supersession note.** An earlier form of this decision (and its Q1-era framing) had reuse work by *live reference + runtime flattening*: a parent held a version-pinned reference to a child workflow-spec, and the child's IR was macro-expanded into the parent at execution time. That model is **superseded** by the fork model below. The motivation is D7's secret-scoping boundary (see "Reuse is by fork" below): live-referencing a workflow with writer-scoped secrets would either carry the author's secret authority across a writer-identity boundary (a D7 violation) or require per-consumer signature holes; forking avoids both. Consequences of the supersession: there is no runtime flattening of an external reference, no transitive *resolution* pin, and no provenance-on-flattened-steps mechanism. The `map`/`forEach` child-execution primitive (D8/D9) is unaffected - it was never about workflow-to-workflow reuse.
+
+**Scope and shape, deliberately asymmetric with the registry (D12).** The store is not a parallel registry for a different artifact type; it differs from D12 in exactly the ways the underlying things differ:
+
+```
+                          REGISTRY (D12)              WORKFLOW-SPEC STORE (D13)
+   contents               service-image metadata      workflow-specs (IR + doc)
+   identity                image digest                URN: workflow / ns/name @ ver
+   contract exposed        OpenAPI (CLI/MCP projected)  derived signature (D8)
+   who writes               platform developers only    workflow-writers (broad)
+   trust model               trust tiers (D5a)            NONE - see below
+   reuse mechanism           invoked as a step            FORK (copy + lineage pin)
+```
+
+**Identity reuses the dataset URN scheme (D8a), one new `resourceType`.** A workflow-spec is identified by `urn:workflow-platform:workflow:<namespace>/<name>[:<tag> | @<version-digest>]`, exactly the pattern D8a established for datasets and explicitly designed to extend to "other globally-shared, versioned resource kinds." A published version is **immutable** (content-addressed under a resolvable tag), the same tag→digest discipline used for images (D12) and datasets (D8a). There is therefore no "overwrite" operation - only publishing a new version. Immutability is not optional here: the fork lineage pin below depends on a source version resolving to identical content forever.
+
+**No trust model.** A workflow is built entirely from already-registered, already-trust-tiered service steps (every leaf step's placement facts come from the registry per D12). There is nothing new to conformance-probe at the workflow level, so this decision deliberately does not introduce a workflow-level analog of D5a.
+
+**Reuse is by fork, not by live reference.** When workflow-writer A wants to reuse workflow B, A **forks** B: B's shape and steps are copied into A's namespace at authoring time, producing a self-contained workflow-spec that A then edits. The fork retains an **immutable lineage pin** to the exact source version (`forkedFrom: urn:...:workflow:ns/B@<version>`), and that lineage is transitive (B's own fork lineage, if any, is itself pinned). The lineage pin exists for provenance/audit and for *upstream-awareness* ("B has a newer version") - it is **not** a live resolution dependency and never auto-propagates B's later edits; picking up upstream changes is a deliberate re-fork, not automatic. Because the fork is self-contained, execution needs no runtime resolution or flattening of any external workflow-spec - the parent's IR already contains everything it runs.
+
+**Why fork rather than live reference: D7's secret boundary makes it the correct model, not merely the simple one.** D7 scopes writer-owned secrets to "the workflow-spec / writer identity." Reusing B therefore cannot silently carry B's writer-scoped secret *authority* into A's execution - that would resolve B's author's secrets under A's identity, breaking D7's isolation boundary. Forking makes this structural: the copy lands in A's namespace under A's writer identity, and any writer-scoped secret reference inherited from B **does not carry** - A must re-bind it with A's own secret reference (or the fork is invalid). This is a **hard platform invariant**, enforced by the platform independently of any tooling: the platform SHALL NOT resolve a writer-scoped secret under a writer identity other than the one that owns the workflow-spec declaring it. See "layering" below for what is *not* the platform's job.
+
+**Layering: the platform enforces invariants; the external authoring tool owns policy and UX.** This mirrors how D8/D10/D11 already delegate authoring-surface concerns to the (funded, external) authoring tool.
+
+```
+PLATFORM (workflow-spec store) enforces INVARIANTS:
+  - immutable, URN-identified, versioned storage
+  - deterministic fork lineage (immutable source-version pin)
+  - HARD: writer-scoped secrets never resolve across writer identity;
+    inherited writer-secret references do not carry through a fork and
+    must be re-bound (a security/correctness boundary, D7)
+
+AUTHORING TOOL (external) owns POLICY + UX:
+  - visibility / tenancy: who may see, fork, or publish into a namespace
+  - the "this shape is reusable; adapt its secrets (and possibly its
+    static-data references), maybe into a new namespace" fork flow
+  - static-DATA visibility preferences (a softer concern than secrets)
+```
+
+**Secrets are a hard boundary; static-data visibility is a softer, tool-owned concern.** Only writer-scoped secrets are an author-identity-bound *authority* the platform must refuse to carry (leaking one is a security breach). Static datasets are content-addressed, immutable, and globally shared across an unbounded author set *by design* (D8a); a reference to one is safe for the platform to carry through a fork. Whether an author nonetheless wants to restrict who may use their dataset is a **visibility preference**, and enforcing it would require per-namespace dataset ACLs - exactly the tenancy machinery this decision keeps out of the platform. So static-data-visibility (and any prompt to re-point a dataset reference on fork) is the authoring tool's concern, not a platform invariant. User-scoped secrets and request/session/user data bindings are resolved at run time by the eventual caller and are unaffected by forking either way.
+
+**Deferred, explicitly, as known limitations rather than solved here:**
+
+```
+VISIBILITY / TENANCY / PUBLISH-AUTHORITY: who may see, fork, or publish
+into which namespace is delegated to the external authoring tool, which
+owns the tenancy model. The platform stores and identifies workflow-
+specs and enforces the secret boundary; it does not adjudicate who is
+allowed to do what socially.
+
+LINEAGE CYCLES: a fork lineage that loops (A forkedFrom B, B forkedFrom
+A across versions) is not meaningful, but this decision does not specify
+detection/rejection of it. Lower-stakes than the earlier reference-
+flatten cycle risk (a fork is a self-contained copy, so a lineage cycle
+cannot cause infinite expansion at execution) - noted as a known
+limitation, tracked as follow-up, not a designed mechanism here.
+
+IR-VERSION MISMATCH ON FORK: a source workflow-spec and the forking
+author may be on different IR versions (D11). This decision does not
+specify migrate-then-fork ordering - it is left to the external
+authoring tool to surface the mismatch for the author to resolve,
+rather than the platform silently migrating or rejecting.
+```
+
+**Rationale**: The fork model follows from taking D7's secret-scoping boundary seriously for workflow reuse: a live reference cannot carry a workflow's author-bound authority without either violating that boundary or complicating every consumer's signature, whereas a fork lands the reuse under the forker's own identity where re-binding is natural. It costs DRY / auto-update, which is an accepted trade: immutable lineage pins still provide upstream-awareness, and the runtime is dramatically simpler (self-contained specs, no external resolution or flattening, `map` child-execution as the only remaining dynamic mechanism).
+
+**Alternatives considered**: Reusing the registry for workflow-specs, distinguished by a `kind: composite` field (rejected - this was D9a's original framing; the compose/nest split shows it conflates two artifact types with two different trust and authorship models under one storage model). Live reference + runtime flattening (rejected on reflection and superseded - see the supersession note; it cannot honor D7's writer-secret boundary without per-consumer signature holes, and forking is both safer and simpler at runtime). Rebind-in-place on a live reference, keeping B authoritative and turning B's writer-secret references into referencer-supplied holes (rejected - preserves DRY but makes a referenced workflow's secret references a per-consumer extension of its derived signature, and keeps the live-resolution machinery the fork model eliminates). Enforcing static-data visibility as a platform invariant (rejected - would pull per-namespace dataset ACLs and tenancy into the platform, which this decision deliberately delegates to the authoring tool; datasets are globally shared by D8a design, so carrying a dataset reference through a fork is safe). Tag-based (rather than immutable-version) fork lineage (rejected for the same reason D12 rejected tag-based digest resolution - a lineage pin must resolve to identical content to be meaningful).
 
 ## Risks / Trade-offs
 
