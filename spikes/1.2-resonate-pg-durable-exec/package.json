@@ -1,0 +1,14 @@
+{
+  "name": "spike-1-2-resonate-pg-durable-exec",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "seed": "node src/seed.js",
+    "test:happy": "node src/test-happy-path.js",
+    "test:contention": "node src/test-contention.js",
+    "test:crash": "node src/test-crash.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}

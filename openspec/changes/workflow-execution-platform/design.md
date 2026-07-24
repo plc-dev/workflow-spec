@@ -300,23 +300,29 @@ This means "build our own" no longer means designing distributed recovery semant
 
 Evaluation, updated to include the newly elevated candidates and the Postgres-native/self-built path:
 
-| Requirement | Temporal | Restate | Dapr | Hatchet | Conductor | Postgres-native (Hatchet/DBOS/adopted-fork) |
+| Requirement | Temporal | Restate | Dapr | Hatchet | Conductor | Postgres-native (resonate-pg-shaped fork) |
 |---|---|---|---|---|---|---|
 | R1-R3 (DAG, warm, handle) | Good | Good | Good | Good | Strong | Good |
 | R4 Affinity-as-optimization | Partial (see R11) | Strong | Strong | Partial | Absent | Strong (see R11 below) |
 | R5 Long sessions | Strong | Strong | Strong | Moderate | Strong | Good (demonstrated) |
-| R6 Durable execution | Strong | Strong | Strong | Strong | Strong | Good (demonstrated, exactly-once via constraint) |
-| R7 Retries/backoff | Strong | Strong | Strong | Strong | Strong | Good (demonstrated) |
+| R6 Durable execution | Strong | Strong | Strong | Strong | Strong | **Confirmed via spike 1.2** - exactly-once via `UNIQUE(execution_id, step_id)`, and crash-tested: a mid-transaction kill rolls back cleanly and a subsequent claimant resumes with no duplicate side effects |
+| R7 Retries/backoff | Strong | Strong | Strong | Strong | Strong | Good (demonstrated; lease-expiry sweep confirmed via spike 1.2's crash test) |
 | R9 Secrets | Good | Good | Good, plus native pluggable Secrets API | Good | Good | Good (same secret model, engine-agnostic) |
 | R10 K8s/KEDA fit | Good | Good | Native | Good | Good | Good (stateless workers, same as any) |
-| R11 Addressable warm entity | Absent, needs a resolver | Strong, but bookkeeping-only (see below) | Strong, but bookkeeping-only (see below) | Partial | Absent | Native home for the bookkeeping - one table, same DB as everything else |
-| R12 Agent composition | Strong | Strong | Good | Good | Strongest - native MCP gateway built in | Demonstrated working (resonate-pg's own agent-loop example) |
+| R11 Addressable warm entity | Absent, needs a resolver | Strong, but bookkeeping-only (see below) | Strong, but bookkeeping-only (see below) | Partial | Absent | **Confirmed via spike 1.2** - the placement table lived in the same schema and the same per-step transaction as the durability core and session log, not merely "the same DB" |
+| R12 Agent composition | Strong | Strong | Good | Good | Strongest - native MCP gateway built in | Demonstrated working (resonate-pg's own agent-loop example); not independently re-exercised by spike 1.2, which scoped to the consolidation question only |
 | Composability fit (D9) | Workable, SDK-adoption tax | Most natural, uniform invocation | Most natural, uniform invocation | Good | Strong, native tool-calling model | Neutral - build the same dispatch discipline either way |
-| 4-way infra consolidation | No | No | No | Partial (Postgres-only) | No | Yes |
-| Operational weight | Heaviest | Light | Light-moderate | Light | Light-moderate | Lightest (schema on infrastructure already run) |
+| 4-way infra consolidation | No | No | No | **No (confirmed SHALLOW via spike 1.2-hatchet)** - worker/Engine gRPC split means step-completion and any of our own placement/session-log writes are always two separate commits, not one, regardless of deployment topology | No | **Yes, DEEP (confirmed via spike 1.2)** - not just same-instance locality: a mid-transaction-crash test showed the durability core, session log, and placement-resolver commit-or-rollback together as one transaction |
+| D3 linear-per-session-mutation under concurrency/crash | N/A (not spiked) | N/A (not spiked; this is what 1.2a exists to check) | N/A (not spiked) | N/A - moot, since Hatchet caps at SHALLOW consolidation anyway | N/A (not spiked) | **Confirmed via spike 1.2** - holds under same-session concurrency, cross-session interleaving (no contamination), and two distinct crash/dead-worker failure shapes, via ordinary `FOR UPDATE` discipline, no surprises |
+| Operational weight | Heaviest | Light | Light-moderate | Light | Light-moderate | Lightest on paper; **not yet load/scale-tested** - spike 1.2 validated correctness under modest concurrency (8 workers, dozens of rows), not vacuum/bloat or connection-ceiling behavior at production-scale churn |
 | Maturity/adoption | Highest | Newer | Moderate ("SDK maturity behind" flagged) | Growing fast (YC-backed) | High (Netflix/enterprise-proven) | Newest as an adopted pattern; the underlying primitive (Postgres) is the most proven of all |
 
-**Status: this decision remains deliberately OPEN.** Tracing the SQL-session scenario concretely through Restate and Dapr produced a correction worth restating: **neither makes our existing heavyweight services "become" addressable actors for free.** Restate's Virtual Object state is small, logical K/V data, not a place to host a multi-GB loaded database engine. Dapr Actors can host true in-memory affinity, but only if the service is rewritten to embed the Dapr Actor SDK - a real authoring-cost tax structurally bigger than what Temporal or Restate ask. The fairer, more conservative use of either primitive is as durable placement *bookkeeping* (an addressable entity per content-hash tracking which plain-REST pod is currently warm), leaving the heavyweight service untouched. Restate additionally gives per-key serialized access "for free," mapping directly onto D3's linear-per-session-mutation requirement. This same bookkeeping-only pattern is exactly what a one-table lookup in a Postgres-native path provides too - which is precisely why the 4-way consolidation finding above matters: it's not a *new* capability the Postgres path adds, it's the *same* placement-bookkeeping need, satisfied by infrastructure already required for other reasons.
+**Status: this decision remains OPEN, but materially less open than before spiking.** Tracing the SQL-session scenario concretely through Restate and Dapr produced a correction worth restating: **neither makes our existing heavyweight services "become" addressable actors for free.** Restate's Virtual Object state is small, logical K/V data, not a place to host a multi-GB loaded database engine. Dapr Actors can host true in-memory affinity, but only if the service is rewritten to embed the Dapr Actor SDK - a real authoring-cost tax structurally bigger than what Temporal or Restate ask. The fairer, more conservative use of either primitive is as durable placement *bookkeeping* (an addressable entity per content-hash tracking which plain-REST pod is currently warm), leaving the heavyweight service untouched. Restate additionally gives per-key serialized access "for free," mapping directly onto D3's linear-per-session-mutation requirement. This same bookkeeping-only pattern is exactly what a one-table lookup in a Postgres-native path provides too - which is precisely why the 4-way consolidation finding above matters: it's not a *new* capability the Postgres path adds, it's the *same* placement-bookkeeping need, satisfied by infrastructure already required for other reasons.
+
+**Spike results (1.2, 1.2-hatchet) - what changed vs. desk research.** Two of the six candidate paths have now been tested empirically rather than evaluated on paper alone (see `spikes/1.2-resonate-pg-durable-exec/FINDINGS.md` and `spikes/1.2-hatchet-product-fit/FINDINGS.md`):
+
+- **Path (f), Postgres-native, forked directly from THE PATTERN (not resonate-pg's Supabase-specific transport - see the spike's own scoping note)**: the DEEP-consolidation claim is no longer just structurally plausible, it is demonstrated. A worker transaction claiming an execution, appending the session log, upserting placement, and writing the completion checkpoint was crash-tested with `pg_terminate_backend` mid-transaction: zero partial writes survived, and recovery was immediate (the claim itself rolled back to `queued`, no lease wait needed) - a stronger resumability property than the lease-expiry path, which was separately confirmed for the genuinely different failure shape of a committed claim whose worker then goes dark. D3's linear-per-session-mutation guarantee held under 8-worker concurrency across two interleaved sessions with zero cross-contamination. This directly answers the technical question 1.2a (Restate) was scoped to check - see the re-scoping below. The one claim spike 1.2 did **not** test is operational weight at real scale (connection ceilings, vacuum/bloat under sustained `UPDATE` churn) - this remains the single open item before treating "lightest operational footprint" as more than a paper claim.
+- **Hatchet**: ruled out as a DEEP-consolidation contender, not merely "Partial" as the desk-research-only prior evaluation had it. Its worker/Engine split is a persistent bidirectional gRPC stream to a separate control-plane process that owns its own Postgres transaction for step-completion - there is no deployment topology (even same-instance) that makes a Hatchet step-completion and our own placement/session-log write share a transaction. This closes what had been the strongest "someone else owns the durability core" contender in Family 1, and reframes Hatchet purely as a SHALLOW-consolidation buy option (ops convenience, no atomicity) against the resonate-pg-shaped fork's build option (full atomicity, we own the durability core).
 
 A secondary, independent finding carried over: Dapr ships a native, pluggable Secrets building block, which would materially help satisfy D7's still-open secrets-broker-product question if Dapr were adopted for other reasons. D9's composability finding is reinforced across every single-system candidate examined (Restate, Dapr, and now Conductor): the primitive used to call *anything* is the same primitive used to call a *composed* service, with no separate "child-workflow ceremony" - a genuine structural improvement over Temporal's two-tier model. The DSL/IR split (D8) continues to insure against this decision being made under uncertainty regardless of which of these paths is chosen.
 
@@ -345,37 +351,78 @@ A secondary, independent finding carried over: Dapr ships a native, pluggable Se
     lowest-effort IR-to-engine compilation target of any candidate. Does not
     natively address R11 (needs the same bookkeeping bolt-on as Temporal).
 
-(f) A Postgres-native path - Hatchet, or adopting/forking a small OSS
+(f) A Postgres-native path, specifically adopting/forking a small OSS
     implementation of the documented Postgres-durable-execution pattern
-    (e.g. resonate-pg) - uniquely consolidating D3's session log, D4's
-    placement-resolver, D6's durability layer, and D8a's dataset catalog
-    onto one already-required piece of infrastructure. Lightest operational
-    footprint of any path; newest as an adopted pattern, though built on the
-    most proven underlying primitive (Postgres) of any candidate considered.
+    (e.g. resonate-pg) - now CONFIRMED (not just structurally plausible) to
+    uniquely consolidate D3's session log, D4's placement-resolver, D6's
+    durability layer, and D8a's dataset catalog onto one already-required
+    piece of infrastructure, via spike 1.2's mid-transaction-crash test.
+    Lightest operational footprint of any path on paper (pending the
+    load/scale check below); newest as an adopted pattern, though built on
+    the most proven underlying primitive (Postgres) of any candidate
+    considered. Hatchet is explicitly NOT an equivalent instance of this
+    path despite also being Postgres-backed: spike 1.2-hatchet confirmed its
+    worker/Engine gRPC split caps it at SHALLOW consolidation, so it competes
+    with this path as a buy-side alternative, not as another way to realize
+    the same DEEP claim.
 ```
 
-**Recommended next step (revised once more - narrowed after weighing spike cost against what desk research already shows).** The evaluation table above already gives the Postgres-native path a real, differentiated edge on paper (the only "yes" on 4-way consolidation, native home for R11, R12 already demonstrated in the reference implementations) - and "implementing our own" was already reframed this round as materially lower-risk than earlier assumed, since the reference implementations are working code, not a design to build from scratch. That's a legitimate basis to narrow spike *effort*, but not to skip spiking entirely: two things the desk research can't settle are (a) whether Restate's "per-key serialized access for free" - which maps directly onto D3's linear-per-session-mutation requirement - is something the Postgres-native path can match via ordinary `SELECT ... FOR UPDATE` discipline without surprises, and (b) an organizational-risk axis the evaluation table has no row for: adopting Temporal/Restate/Dapr means a vendor/community maintains the recovery engine indefinitely, while forking a resonate-pg-shaped implementation means **this team** owns operating and patching a durability core in production - a real, ongoing cost distinct from whether the pattern is "proven."
+**Recommended next step (revised again - two of the two deep/shallow spikes below are now DONE, which lets the remaining queue be re-scoped rather than merely re-prioritized).** The evaluation table above already gave the Postgres-native path a real, differentiated edge on paper before any code was written; spikes 1.2 and 1.2-hatchet have since converted the two most consequential rows of that table from paper claims into tested results (see "Spike results" above). That empirical result - not just desk research - is what justifies re-scoping 1.2a (Restate) below: the specific technical unknown it existed to check has already been answered by spike 1.2's own contention test. The organizational-risk axis this evaluation table still has no row for is unchanged by any of this: adopting Temporal/Restate/Dapr/Hatchet means a vendor/community maintains the recovery engine indefinitely, while forking a resonate-pg-shaped implementation means **this team** owns operating and patching a durability core in production - a real, ongoing cost distinct from whether the pattern is "proven," and not something further spiking resolves either way.
 
 The resulting plan:
 
 ```
-PRIMARY, DEEPEST SPIKE - Postgres-native (Hatchet, or forking resonate-pg
-  directly): the SQL-session scenario, explicitly testing whether the
-  placement-resolver (D4) and session log (D3) can genuinely share one
-  Postgres instance with the durability layer - i.e. testing the 4-way
-  consolidation claim itself, not just baseline durability/R1-R10.
+DONE - PRIMARY, DEEPEST SPIKE: forked THE PATTERN (resonate-pg-shaped,
+  not resonate-pg's Supabase-specific transport) directly against the
+  SQL-session scenario. Result: DEEP consolidation confirmed (not just
+  same-instance locality) via a mid-transaction-crash test, plus D3's
+  linear-per-session-mutation guarantee confirmed under both concurrency
+  (including cross-session interleaving) and two distinct crash/dead-
+  worker failure shapes. See spikes/1.2-resonate-pg-durable-exec/.
+  Remaining gap: operational weight at real scale was NOT tested (see
+  the new load/scale-check item below) - the correctness claims are
+  settled, the "lightest operational footprint" claim's scale half is
+  not yet.
 
-NARROW, TARGETED SPIKE - Restate: scoped ONLY to validating the one
-  differentiated capability claim the Postgres-native path doesn't
-  obviously get for free - per-key serialized access mapping onto D3's
-  linear-per-session-mutation requirement. Not a full parallel build-out
-  of the SQL-session scenario end-to-end.
+DONE - HATCHET, SHALLOW PRODUCT-FIT EVALUATION: answered by architecture
+  research (gRPC worker<->Engine split; Engine owns its own Postgres
+  transaction for step-completion) rather than a build-out, per its
+  lightweight-evaluation scoping. Result: Hatchet is capped at SHALLOW
+  consolidation - a step-completion and any of our own placement/
+  session-log writes are always two separate commits, in any deployment
+  topology. This closes Hatchet out as a DEEP-consolidation contender and
+  reframes it purely as a build-(resonate-pg fork)-vs-buy-(Hatchet,
+  SHALLOW-only) trade. See spikes/1.2-hatchet-product-fit/FINDINGS.md.
+
+RE-SCOPED, NOW LIGHTWEIGHT (was: NARROW, TARGETED SPIKE) - Restate: the
+  one differentiated capability claim this was scoped to check - whether
+  the Postgres-native path can match Restate's "per-key serialized access
+  for free" via ordinary `SELECT ... FOR UPDATE` discipline without
+  surprises - has already been answered empirically by spike 1.2's own
+  contention test (same-session serialization + cross-session non-
+  contamination, no surprises found). A full parallel build-out against
+  Restate is no longer justified by an open technical question; downgrade
+  to the same desk-research posture given to Hatchet and Conductor: confirm
+  via Restate's own docs/architecture that no other differentiator applies
+  beyond what D6 has already found (Virtual Objects can't host the
+  heavyweight SQL service itself, only bookkeeping - already established
+  above), then close it out without further spike effort.
+
+NEW - LOAD/SCALE CHECK for the Postgres-native path: the one claim spike
+  1.2 did not test. Narrowly scoped (like 1.2a was originally) rather than
+  a production-readiness project: higher worker/execution-row counts than
+  spike 1.2 used, watching for lock contention, connection-count ceilings,
+  and vacuum/bloat under sustained UPDATE churn on `executions`. This is
+  the last open item before treating "lightest operational footprint" as
+  more than a paper claim, and should close before 1.4 locks in a
+  recommendation.
 
 DEFERRED, NOT ACTIVELY SPIKED - Dapr: its main differentiator (a native
   Secrets API) is a nice-to-have against an already-decided, broker-
   agnostic D7 - not something a spike needs to validate to make progress.
-  Documented as a fallback; only spiked if the two spikes above surface a
-  blocker neither resolves.
+  Documented as a fallback; only spiked if 1.2 or the Restate evaluation
+  surfaces a blocker neither resolves (unchanged trigger condition; it has
+  not fired).
 
 UNCHANGED - Temporal (deprioritized baseline/fallback, per the prior
   round's finding) and a light-touch Conductor evaluation (its native MCP
