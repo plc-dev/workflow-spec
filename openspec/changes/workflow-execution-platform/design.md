@@ -354,7 +354,36 @@ A secondary, independent finding carried over: Dapr ships a native, pluggable Se
     most proven underlying primitive (Postgres) of any candidate considered.
 ```
 
-**Recommended next step (revised again)**: spike the SQL-session scenario against Restate and Dapr in bookkeeping-only mode (as before), and add a third spike against a Postgres-native path (Hatchet, or forking resonate-pg directly) specifically testing whether the placement-resolver and session log can genuinely share one Postgres instance with the durability layer. Evaluate Conductor separately and more lightly, specifically for how directly its native MCP gateway and declarative workflow format could serve D9c and the IR-to-engine compilation step (D8), before committing effort to a full spike. Run all of this alongside the D9 policy decision, since composability cost is coupled to whichever engine is chosen.
+**Recommended next step (revised once more - narrowed after weighing spike cost against what desk research already shows).** The evaluation table above already gives the Postgres-native path a real, differentiated edge on paper (the only "yes" on 4-way consolidation, native home for R11, R12 already demonstrated in the reference implementations) - and "implementing our own" was already reframed this round as materially lower-risk than earlier assumed, since the reference implementations are working code, not a design to build from scratch. That's a legitimate basis to narrow spike *effort*, but not to skip spiking entirely: two things the desk research can't settle are (a) whether Restate's "per-key serialized access for free" - which maps directly onto D3's linear-per-session-mutation requirement - is something the Postgres-native path can match via ordinary `SELECT ... FOR UPDATE` discipline without surprises, and (b) an organizational-risk axis the evaluation table has no row for: adopting Temporal/Restate/Dapr means a vendor/community maintains the recovery engine indefinitely, while forking a resonate-pg-shaped implementation means **this team** owns operating and patching a durability core in production - a real, ongoing cost distinct from whether the pattern is "proven."
+
+The resulting plan:
+
+```
+PRIMARY, DEEPEST SPIKE - Postgres-native (Hatchet, or forking resonate-pg
+  directly): the SQL-session scenario, explicitly testing whether the
+  placement-resolver (D4) and session log (D3) can genuinely share one
+  Postgres instance with the durability layer - i.e. testing the 4-way
+  consolidation claim itself, not just baseline durability/R1-R10.
+
+NARROW, TARGETED SPIKE - Restate: scoped ONLY to validating the one
+  differentiated capability claim the Postgres-native path doesn't
+  obviously get for free - per-key serialized access mapping onto D3's
+  linear-per-session-mutation requirement. Not a full parallel build-out
+  of the SQL-session scenario end-to-end.
+
+DEFERRED, NOT ACTIVELY SPIKED - Dapr: its main differentiator (a native
+  Secrets API) is a nice-to-have against an already-decided, broker-
+  agnostic D7 - not something a spike needs to validate to make progress.
+  Documented as a fallback; only spiked if the two spikes above surface a
+  blocker neither resolves.
+
+UNCHANGED - Temporal (deprioritized baseline/fallback, per the prior
+  round's finding) and a light-touch Conductor evaluation (its native MCP
+  gateway's fit for D9c and D8's IR-to-engine compilation step) before
+  committing to any full spike of it.
+```
+
+Run all of this alongside the D9 policy decision, since nesting-mechanism cost is coupled to whichever engine is chosen.
 
 **Everything downstream of this decision in this design (D7-D10, and every capability spec/task in this change) is written in engine-agnostic terms** - references to "step execution," "durable history," and "child/tracked execution" describe properties that a chosen engine is expected to provide, not a commitment to any specific engine's terminology or mechanism.
 
