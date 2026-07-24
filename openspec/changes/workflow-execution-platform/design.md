@@ -1,0 +1,641 @@
+## Context
+
+The platform runs a growing catalog of dockerized, stateless-function services (REST API + CLI, discoverable via OpenAPI through a registry). An external frontend triggers workflows composed of these services, injecting user-provided runtime data. Some data is static and referenceable, but users may manipulate it, creating session-scoped derived data that must not be baked into workflow definitions.
+
+Initial candidate stack: Kubernetes (deployment/resources), KEDA (autoscaling), Argo Workflows (engine). This design documents why that stack was reconsidered. Kubernetes and KEDA remain well-supported as the compute substrate; the orchestration/execution-engine layer specifically is treated as an **open question** in this design (see D6) rather than a settled choice, and every other decision here is written to remain valid regardless of which engine is eventually selected.
+
+The central tension driving this design: services span two execution shapes -
+
+- **World 1 - truly stateless**: e.g. noise generation, edit distance. Cheap setup, no shared state. Fine to spawn-per-call or pool; isolation is trivial.
+- **World 2 - setup-heavy**: e.g. a SQL-execution service that must first materialize a database dump before running a query. The materialized state may be shared (static dump) or session-private (user-manipulated dump), and is expensive enough to warrant reuse/pooling.
+
+Both worlds exist simultaneously across the service catalog, decided per-invocation by the workflow-writer, not fixed per-service (the same SQL service can be bound to a static dump in one workflow and a session dump in another).
+
+## Goals / Non-Goals
+
+**Goals:**
+- Support a DSL that lets workflow-writers compose docker service images into workflow-specs, referencing data by source (user/static/session) rather than embedding it.
+- Guarantee data isolation between users/sessions even when execution units (containers) are pooled/reused for performance.
+- Support both World 1 (spawn-per-call) and World 2 (warm, setup-heavy) services under one model, with the execution strategy chosen by placement logic rather than hardcoded per service.
+- Make session state durable, reconstructable, and independent of any single worker's lifetime.
+- Make affinity (routing to a worker with warm state) strictly an optimization - never a correctness requirement - so the compute substrate (K8s/KEDA) can remain stateless-worker-friendly.
+- Provide native job guarantees: retries, backoff, timeouts, idempotency.
+- Inject secrets into steps, scoped by ownership, without leaking across the isolation boundary or into durable execution history.
+- Separate the DSL's authoring surface from a stable intermediate representation (IR), so authoring syntax can evolve or be plural without destabilizing the runtime contract, and so the underlying execution engine can be selected - or changed - independently of the DSL.
+- Support real-world control-flow needs (conditional branching, dynamic-cardinality iteration, and bounded agent-directed composition) while keeping the IR as statically analyzable as possible for the scheduler.
+- Leave the concrete authoring syntax/grammar, the specific secrets-broker product, the service-composability model, and the execution engine itself as explicit follow-ups (not fully solved here).
+
+**Non-Goals:**
+- Defining the concrete authoring surface syntax/grammar (tracked as an open question / follow-on design).
+- Selecting a specific secrets-broker product (the injection model is decided in D7; the store is kept agnostic and tracked as an open question).
+- Selecting a specific content-addressed storage product or execution-engine deployment topology (operational choice, deferred to implementation; the engine itself is also not yet selected - see D6).
+- Solving cross-session snapshot merge/branching (out of scope - sessions are modeled as linear chains only).
+- Defending against untrusted/arbitrary service images (services are trusted platform code; if that ever changes, D7's threat model must be revisited).
+- Selecting the specific mechanism/SDK that realizes the orchestrator-aware composition path (D9b) for whichever engine D6 selects - the policy (mandatory-by-default) is decided; the concrete mechanism cost is coupled to D6.
+- Designing the general case of exposing this platform's registry *outward* to arbitrary third-party agent hosts as an MCP server (distinct from D9c, which covers an internal agent-runner service invoked as a step) - noted as a real, separate idea, not designed here.
+- Selecting the execution engine itself (D6's leading paths are Temporal+resolver, Temporal+Ray hybrid, Restate, Dapr, or a DBOS-shaped self-written alternative; Argo scores weakly across D6's own evaluation and is not among the leading paths, though not formally excluded). Every requirement, IR construct, and spec in this change is written to be engine-agnostic so this decision can be resolved later without invalidating what's captured so far.
+
+## Decisions
+
+### D1: Classify state by scope x setup-cost, not by "stateless vs. stateful"
+
+Rather than treating services as globally stateless or stateful, every data binding in a workflow is classified along two axes at instantiation time:
+
+```
+                SETUP COST
+          negligible          heavy
+        ┌───────────────┬──────────────────────────┐
+none/   │ spawn or warm,│ (rare)                    │
+global- │ doesn't matter│ materialize once, SHARE   │
+static  │               │ read-only, pool hard      │
+        ├───────────────┼──────────────────────────┤
+session │ (uncommon)    │ materialize per session,  │
+        │               │ ISOLATE, reuse within     │
+        │               │ session                   │
+        ├───────────────┼──────────────────────────┤
+request │ load-per-call,│ expensive setup that can't │
+        │ throw away    │ be amortized - accepted cost│
+        └───────────────┴──────────────────────────┘
+```
+
+**Rationale**: The same service (e.g. the SQL service) lands in different cells depending on what it's bound to, not on its own identity. Isolation/pooling strategy must therefore be decided per-binding, at workflow-instantiation time, not hardcoded per service image.
+
+**Alternatives considered**: Tagging services as "stateless" or "stateful" globally (rejected - doesn't capture that the same service can be bound to static or session data depending on workflow intent).
+
+### D2: Content-address materialized state; isolation is a consequence of the cache key
+
+Warm/materialized state (e.g. a loaded DB) is keyed by a hash of what produced it (base dump + applied operations). Identical inputs -> identical hash -> safe sharing. Divergent (e.g. user-mutated) inputs -> different hash -> naturally isolated, with no possibility of cross-session collision.
+
+**Rationale**: This turns data isolation from an enforced discipline (every service must be manually audited to not leak state) into a structural guarantee (different hash = different state, unconditionally).
+
+### D3: Sessions are event-sourced; snapshots are a derived, GC-able cache
+
+The durable source of truth for a session is its **user input history** (the sequence of actions/mutations), stored outside the execution/state-cache scope. Materialized snapshots are a cache over that history:
+
+```
+SOURCE OF TRUTH:   user input history  (durable, kept)
+                     |  replay
+                     v
+DERIVED CACHE:     snapshot chain  (TTL'd - "days" - and GC-able)
+```
+
+Session snapshot chains are strictly linear per session (mutations happen one at a time within a session). Across sessions, chains diverge from shared immutable roots (e.g. a static dump) and never need to merge:
+
+```
+                 static base 0xAAA (read-only, shared)
+                        |
+        +---------------+---------------+
+        v               v               v
+   session-A        session-B       session-C
+    0xBBB             0xEEE          (still 0xAAA)
+      |
+    0xCCC
+```
+
+Copy-on-write is used where the underlying service/engine supports incremental snapshots, so large static bases (e.g. tens of GB) are loaded once and shared; sessions pay only for their delta. COW support is declared as a per-service capability (see D5) - it is confirmed available for at least the SQL-dump use case.
+
+Because snapshots are always reconstructable from the input history, TTL-based garbage collection of snapshots is safe at any time; nothing depends on snapshot retention for correctness.
+
+**Rationale**: Decouples correctness (guaranteed by the durable log) from performance (the cache), which is what allows affinity/pooling to be "just" optimizations (see D4) and allows unbounded GC of warm state.
+
+**Note**: this session input-history log may, depending on the execution engine eventually selected (D6), be implementable directly on top of that engine's own durable execution history (several candidate engines maintain one already) rather than as wholly separate infrastructure - see D6's findings.
+
+**D3a: Undo/time-travel is a UX surface over the existing log, not a new capability.** Because the durable input-history log is always kept independent of snapshot GC, reconstructing an arbitrary earlier point in a session is already possible via replay - "should sessions support undo" therefore narrows to two much smaller decisions rather than requiring new architecture:
+
+1. **Product/API surface**: rewinding a session's pointer to an earlier point in its own chain, and what happens on the next new mutation after a rewind. Decision: **linear undo-with-truncation** (the same semantics as a text editor or image editor's undo stack) - a rewind moves the current pointer backward; a subsequent new mutation abandons the truncated-off forward tail and starts fresh from the rewind point. This stays fully consistent with the existing constraint that sessions are linear chains with no merge/branch (D3's diagram above) - it is pointer movement plus truncation, not Git-like branching.
+2. **Retention as a performance knob, not a correctness dependency**: a tunable **checkpoint interval** controls how many intermediate snapshots stay materialized/cached (faster undo, more storage) versus how much is rebuilt via replay-from-history on demand (slower undo, less storage) - the same idea as WAL/keyframe checkpointing elsewhere in computing. Default: retain the full snapshot chain for the life of the session (cheap given content-addressed dedup of shared roots per D2), GC'd only when the session itself expires; any snapshot evicted earlier under storage pressure remains reconstructable via replay, per the TTL-is-a-cache-policy principle already established above.
+
+**Rationale**: Keeps undo/time-travel from becoming a special case - it is the same durable-log-plus-derived-cache model already in place, exercised by a rewind verb instead of only a forward-append verb.
+
+### D4: Placement/affinity is fused from three sources and is always an optimization
+
+A scheduler decides execution strategy (spawn vs. warm pool, shared vs. isolated, pinned vs. rehydrate-anywhere) by fusing:
+
+```
+1. SERVICE CAPABILITIES  (owner: service author, declared in OpenAPI/registry)
+     mutates? / materialization cost class / COW support / change-detection
+
+2. WORKFLOW INTENT        (owner: workflow-writer, declared in the DSL)
+     scope: static | session | request
+     mutable: true | false
+     interactivity: interactive | batch   <- latency-sensitivity hint
+
+3. RUNTIME OBSERVATION    (owner: scheduler, measured)
+     actual snapshot size, access frequency/recency
+```
+
+The workflow-writer never declares mechanism (volumes, affinity, pool size) or a byte-size threshold - they don't know the runtime size of user data. They declare *intent* ("this is an interactive session" vs "this is a batch step"); the runtime combines that with observed size to pick a mechanism, and can adaptively promote a session to pinned/warm if it proves large and hot. Because state is durable and content-addressed (D2/D3), getting this placement "wrong" costs performance, never correctness.
+
+Change-detection is delegated to the service: a service call reports whether it actually mutated state, so read-only queries against a session's materialized state do not spuriously advance the snapshot chain.
+
+**Rationale**: Keeps the DSL declarative and free of infrastructure concerns; keeps K8s/KEDA in their comfort zone (stateless, freely-scheduled workers) by making stickiness opportunistic rather than required.
+
+**Note**: this decision establishes *that* placement is fused from three sources and *that* affinity is optional, but deliberately does not specify the concrete mechanism that turns a placement decision into an actually-routed call to a specific service replica (e.g. a dedicated placement-resolver/router component, or a native addressable-entity primitive if the selected engine provides one - see D6 R11). That mechanism is an open follow-up, not yet designed.
+
+**D4a: Auto-promotion thresholds - a cache-admission model, not fixed constants.** Adaptive residency promotion (unpinned -> pinned) is decided by a model analogous to standard cache-admission policies (e.g. GDSF - greedy dual-size frequency), rather than an arbitrary rule:
+
+```
+PROMOTE (unpinned -> pinned) requires ALL of:
+  - declared interactivity = "interactive" (never auto-promote a batch-
+    scoped binding, regardless of frequency - latency isn't the concern)
+  - estimated/observed rehydration cost is above a latency threshold
+    (starting default: ~250-500ms, below which users likely won't
+    perceive the difference)
+  - recent access frequency crosses a threshold (starting default:
+    >= 3 accesses within a 5-10 minute rolling window)
+
+DEMOTE (pinned -> unpinned) uses a HIGHER idle threshold than promotion
+requires (starting default: ~15-30 minutes idle) - deliberate hysteresis
+(promote-quick, demote-slow) to avoid flapping.
+
+CAPACITY-AWARE: if a pinned-pool memory/size budget is exceeded, evict
+LRU among the PINNED set even if an entry would otherwise still qualify
+to stay pinned - ties directly into autoscaling-pooling's capacity
+planning.
+
+COST ESTIMATION: use the service's declared materialization-cost-class
+(D5) as a prior before empirical data exists; switch to an observed
+rolling average (per service + size-bucket) once enough real
+rehydration timings have been sampled.
+```
+
+All numeric thresholds above are explicit **starting defaults, exposed as tunable scheduler parameters** - not hardcoded constants - since real tuning is only possible once there is real traffic to observe.
+
+### D5: Service capability metadata lives in the OpenAPI/registry, not the DSL
+
+Per-service facts needed for placement (mutates?, materialization cost class, COW/incremental-snapshot support, change-detection support) are declared by the service author and exposed via the existing OpenAPI/registry mechanism, extended with this metadata. The workflow DSL only carries workflow-writer intent (D4), never service mechanics.
+
+**Rationale**: Keeps the separation of concerns clean: "what a service can do" is owned by the service author; "what a workflow wants" is owned by the workflow-writer; "how to place it" is owned by the runtime.
+
+**D5a: Capability declarations must earn scheduler trust; trust is an optimization, never a correctness default.** A false capability declaration (e.g. a service that claims non-mutating or COW-capable but isn't) breaks the isolation guarantee itself, not just performance - this is a genuine correctness stake, addressed with the same pattern already used for affinity (D4) and residency (D4a): start conservative, promote only on evidence.
+
+```
+TRUST TIERS, keyed to a specific service IMAGE DIGEST (not the service
+name in the abstract - a regression in a new build does not inherit an
+older build's earned trust):
+
+  UNVERIFIED         -> scheduler is fully conservative: no sharing, no
+                         pooling, no COW reuse, regardless of what is
+                         declared
+  CONFORMANCE-PASSED  -> passed automated conformance probes at
+                         registration (e.g. call twice with identical
+                         inputs and verify declared mutation/non-
+                         mutation behavior holds; verify a COW claim by
+                         checking the base is unaffected after a
+                         claimed-isolated mutation)
+  PRODUCTION-PROVEN   -> conformance re-run and passed on every redeploy
+                         (CI/CD-gated), plus a soak period with no
+                         detected violations
+
+The scheduler only leans on a capability declaration (sharing, pooling,
+COW reuse) once a service build has reached PRODUCTION-PROVEN.
+```
+
+A continuous **runtime invariant check** guards against drift after promotion (a later redeploy could silently regress a previously-earned claim): periodically sample a claimed-immutable/shared binding across different callers; if outputs diverge unexpectedly, that is a strong signal of a false claim - auto-demote the trust tier and alert, rather than waiting for a human to notice a leak.
+
+**Rationale**: Extends the "optimization, never correctness requirement" pattern used throughout D2-D10 to trust itself - closes the gap flagged in the original Risk entry ("capability declarations are a trust boundary that should be validated... not yet designed") with a concrete mechanism.
+
+### D6: Execution engine selection - OPEN QUESTION (not yet decided)
+
+An execution engine must satisfy requirements derived from D1-D5, plus two more surfaced later while stress-testing this decision against still-open requirements elsewhere in this design:
+
+```
+R1  Sequence DSL-defined DAGs of steps
+R2  Call BOTH warm pooled services (World 2) AND spawned jobs (World 1)
+R3  Pass data BY HANDLE (content hash), never by value, for large state
+R4  Honor placement hints; prefer a warm worker but fall back freely (D4)
+R5  Model a SESSION: long-lived (hours-days), linear, driven by discrete
+    user actions over time
+R6  Durable execution: survive engine/worker restarts, resume mid-flow
+R7  Native retries / backoff / timeouts / idempotency
+R8  Skip/reuse steps already covered by the memoization cache (D2/D3)
+R9  Inject secrets per step without leaking across isolation boundaries
+R10 Distributed, load-balanced, KEDA-scalable workers
+R11 Native, addressable "warm entity per key" primitive - a first-class way
+    to route to the specific instance holding a given content-hash's warm
+    state, without hand-building a separate resolver/router
+R12 Support bounded, agent-directed dynamic composition (an unpredictable,
+    non-statically-enumerable sequence of calls within a declared allowlist),
+    with durability across potentially long, multi-round tool-calling loops
+```
+
+**A more fundamental axis, found while widening the candidate search, cuts across all of R1-R12**: candidate engines split into three recovery architectures, and this determines whether D8's determinism-shielding rationale even applies to the engine eventually chosen.
+
+```
+REPLAY-BASED (Temporal, Restate, Hatchet, Cadence, Dapr Workflows):
+  full event history replayed on recovery; workflow-level code MUST be
+  deterministic; gives a free audit trail / time-travel debugging.
+
+CHECKPOINT-BASED (Trigger.dev v3/v4, DBOS, LangGraph-style checkpointers):
+  state snapshotted at explicit await points; no replay, NO determinism
+  constraint; audit trail must be built on top of explicit checkpoints.
+
+EVENT-DRIVEN / HTTP-INVOKED (Inngest, Upstash Workflow, Cloudflare Workflows):
+  steps delivered to your own app as HTTP requests; engine memoizes
+  completed results; no infra of your own to run; explicitly weaker fit
+  for "one agent loop touching many tools for hours" per independent
+  sources, which matters directly for R12.
+```
+
+Widened candidate map (this is now a broader, family-organized survey rather than four named products):
+
+```
+FAMILY 1 - Replay-based durable execution: Temporal, Restate, Hatchet (partly), Cadence,
+           Dapr Workflows, Conductor (Orkes)
+FAMILY 2 - Checkpoint/event-driven durable execution: Trigger.dev, Inngest, Upstash Workflow,
+           Cloudflare Workflows, DBOS
+FAMILY 3 - Virtual-actor / addressable-entity frameworks (R11 specialists): Orleans (.NET-only),
+           Akka/Akka.NET, Dapr Actors (polyglot), Cloudflare Durable Objects (Cloudflare-only,
+           not self-hostable in our own K8s - set aside on that basis)
+FAMILY 4 - K8s-native / declarative / data orchestration: Argo, Kestra, Airflow/Prefect/Dagster
+           (data-pipeline shaped), Camunda 8/Zeebe (BPMN), AWS Step Functions/Azure Durable
+           Functions/GCP Workflows (managed, vendor-locked) - re-confirms the original weak-fit
+           finding for this family rather than overturning it, with two exceptions noted below
+FAMILY 5 - Self-written / adopted-thin-library, all Postgres-centric: a full custom replay/
+           checkpoint engine; a DBOS-shaped thin library that delegates durable recovery to
+           Postgres transactions; or adopting/forking a small, already-working OSS
+           implementation of the same pattern (see findings below) rather than designing it
+           from first principles
+```
+
+Two Family-4-adjacent entries deserve elevation rather than the blanket weak-fit finding:
+
+- **Conductor (Orkes)** - Netflix-built, Apache 2.0, Orkes-stewarded, proven at Netflix/Tesla/LinkedIn/JPMorgan scale. Ships a **native MCP gateway (Agentspan)** and 14+ built-in LLM provider task types - directly relevant to D9c. Its architecture explicitly separates declarative orchestration (JSON) from plain worker code with "zero framework constraints," and treats determinism as an architectural property of the orchestration layer rather than a discipline imposed on workflow-writers - strikingly close to what D8/D8a independently arrived at for this design. Re-classified into Family 1 above rather than left in Family 4.
+- **Camunda 8 / Zeebe** - BPMN-based, explicitly marketed in 2026 for "durable multi-agent coordination" and handoff/supervisor agent patterns, distributed-by-design (not a central-DB bottleneck). A real contender, but Zeebe requires a paid enterprise license for production use since 2024, and its culture/audience (enterprise BPM, business/IT collaboration via visual BPMN diagrams) is a different fit than this platform's dockerized-function/workflow-writer audience.
+- **Kestra** is philosophically the closest authoring-surface match to D8a (YAML-first, subflows resembling D9a's composite entries, namespaces resembling D8a's dataset catalog namespacing) but originated in the data-pipeline camp; its crash-durability semantics for long, agent-shaped workloads are less battle-tested than the dedicated durable-execution engines. Worth noting the convergence, not yet a leading candidate on durability grounds.
+- **Golem** (WASM-based, agent-native) is the youngest and most opinionated option found - worth knowing it exists, not yet a serious candidate given its immaturity.
+
+**"Implementing our own" is materially less risky than earlier framed.** There is now a well-documented, multiply-implemented pattern for exactly this, not just a theory:
+
+```
+THE PATTERN (independently arrived at by DBOS, a Hatchet-published tutorial,
+and multiple other teams in 2026):
+  - an executions table (status, step, input, context, lease/heartbeat)
+  - claim via `SELECT ... FOR UPDATE SKIP LOCKED` - the entire dispatcher,
+    no broker, no leader election
+  - idempotent steps via a UNIQUE(execution_id, step_id) constraint on a
+    checkpoints table - Postgres enforces exactly-once, not application code
+  - LISTEN/NOTIFY for low-latency wakeup (a latency optimization; the rows
+    ARE the queue, not NOTIFY)
+  - a `waits` table with a wake_at timestamp for durable sleep/human-in-
+    the-loop - a multi-week wait costs exactly one row
+  - a sweeper that resets/retries executions whose lease has expired
+
+REFERENCE IMPLEMENTATIONS THAT ALREADY EXIST (permissively licensed):
+  - resonate-pg: the entire server as one ~1,350-line PL/pgSQL SQL file -
+    turns any Postgres 16+ into a durable execution engine (pg_cron for
+    timers, pg_net for HTTP dispatch). Demonstrated running a durable
+    agent loop (think -> tool -> observe) with a human-in-the-loop pause
+    and parallel fan-out, crash-tested on purpose mid-task, exactly-once
+    step semantics confirmed under test.
+  - hatchet-dev/durable-execution-the-hard-way - a from-scratch tutorial
+    teaching this exact recipe
+  - pipelines-ts, pg-workflows - smaller TypeScript-native equivalents
+```
+
+This means "build our own" no longer means designing distributed recovery semantics from first principles - it means adopting or forking a small, auditable, already-working implementation, and building D1-D11's genuinely novel logic on top of it, the same way one would on top of any bought engine.
+
+**A new finding this round: a Postgres-centric engine choice could consolidate four separate open infrastructure items onto one system.** Four different open items in this design each independently want a durable, queryable, transactional store: D6's execution engine durability layer; D4's still-undesigned placement-resolver (fundamentally a one-table lookup with a unique index - "which replica is warm for hash X"); D8a's dataset resource catalog (tag -> digest -> storage location); and D3's session input-history log. If the engine is Postgres-native (Hatchet, DBOS, or an adopted/forked resonate-pg-style build), **all four could live in the same Postgres instance/cluster** rather than four separate pieces of infrastructure to operate - a materially different operational cost profile than Temporal (separate cluster), Restate (separate RocksDB-backed binary), or Dapr (a sidecar mesh plus whatever state store it's pointed at), none of which naturally absorb the other three items just by being chosen.
+
+Evaluation, updated to include the newly elevated candidates and the Postgres-native/self-built path:
+
+| Requirement | Temporal | Restate | Dapr | Hatchet | Conductor | Postgres-native (Hatchet/DBOS/adopted-fork) |
+|---|---|---|---|---|---|---|
+| R1-R3 (DAG, warm, handle) | Good | Good | Good | Good | Strong | Good |
+| R4 Affinity-as-optimization | Partial (see R11) | Strong | Strong | Partial | Absent | Strong (see R11 below) |
+| R5 Long sessions | Strong | Strong | Strong | Moderate | Strong | Good (demonstrated) |
+| R6 Durable execution | Strong | Strong | Strong | Strong | Strong | Good (demonstrated, exactly-once via constraint) |
+| R7 Retries/backoff | Strong | Strong | Strong | Strong | Strong | Good (demonstrated) |
+| R9 Secrets | Good | Good | Good, plus native pluggable Secrets API | Good | Good | Good (same secret model, engine-agnostic) |
+| R10 K8s/KEDA fit | Good | Good | Native | Good | Good | Good (stateless workers, same as any) |
+| R11 Addressable warm entity | Absent, needs a resolver | Strong, but bookkeeping-only (see below) | Strong, but bookkeeping-only (see below) | Partial | Absent | Native home for the bookkeeping - one table, same DB as everything else |
+| R12 Agent composition | Strong | Strong | Good | Good | Strongest - native MCP gateway built in | Demonstrated working (resonate-pg's own agent-loop example) |
+| Composability fit (D9) | Workable, SDK-adoption tax | Most natural, uniform invocation | Most natural, uniform invocation | Good | Strong, native tool-calling model | Neutral - build the same dispatch discipline either way |
+| 4-way infra consolidation | No | No | No | Partial (Postgres-only) | No | Yes |
+| Operational weight | Heaviest | Light | Light-moderate | Light | Light-moderate | Lightest (schema on infrastructure already run) |
+| Maturity/adoption | Highest | Newer | Moderate ("SDK maturity behind" flagged) | Growing fast (YC-backed) | High (Netflix/enterprise-proven) | Newest as an adopted pattern; the underlying primitive (Postgres) is the most proven of all |
+
+**Status: this decision remains deliberately OPEN.** Tracing the SQL-session scenario concretely through Restate and Dapr produced a correction worth restating: **neither makes our existing heavyweight services "become" addressable actors for free.** Restate's Virtual Object state is small, logical K/V data, not a place to host a multi-GB loaded database engine. Dapr Actors can host true in-memory affinity, but only if the service is rewritten to embed the Dapr Actor SDK - a real authoring-cost tax structurally bigger than what Temporal or Restate ask. The fairer, more conservative use of either primitive is as durable placement *bookkeeping* (an addressable entity per content-hash tracking which plain-REST pod is currently warm), leaving the heavyweight service untouched. Restate additionally gives per-key serialized access "for free," mapping directly onto D3's linear-per-session-mutation requirement. This same bookkeeping-only pattern is exactly what a one-table lookup in a Postgres-native path provides too - which is precisely why the 4-way consolidation finding above matters: it's not a *new* capability the Postgres path adds, it's the *same* placement-bookkeeping need, satisfied by infrastructure already required for other reasons.
+
+A secondary, independent finding carried over: Dapr ships a native, pluggable Secrets building block, which would materially help satisfy D7's still-open secrets-broker-product question if Dapr were adopted for other reasons. D9's composability finding is reinforced across every single-system candidate examined (Restate, Dapr, and now Conductor): the primitive used to call *anything* is the same primitive used to call a *composed* service, with no separate "child-workflow ceremony" - a genuine structural improvement over Temporal's two-tier model. The DSL/IR split (D8) continues to insure against this decision being made under uncertainty regardless of which of these paths is chosen.
+
+**Leading paths, updated:**
+
+```
+(a) A Temporal-shaped engine + a hand-built placement-resolver/router for R11.
+    Proven, mature, heaviest operational footprint; most work required for
+    R11; keeps services as plain, unmodified REST/CLI containers.
+
+(b) A Temporal-shaped engine hybridized with an actor-model engine (e.g. Ray)
+    for R2-R4,R11. Weakened relative to every single-system path below.
+
+(c) Restate as a single system for R1-R12, using Virtual Objects for durable
+    placement bookkeeping (not for hosting the heavyweight services). Newer,
+    less proven at scale than Temporal.
+
+(d) Dapr (Workflows + Actors) as a single polyglot, K8s-native runtime,
+    defaulting to bookkeeping-only use of Actors. Also plausibly resolves
+    D7's secrets-broker question via Dapr's native Secrets API. "SDK
+    maturity behind" is a real, independently-flagged risk.
+
+(e) Conductor (Orkes) as a single, Netflix/enterprise-proven system with a
+    native MCP gateway (Agentspan) directly matching D9c, and a declarative
+    orchestration model close to D8/D8a's own philosophy - potentially the
+    lowest-effort IR-to-engine compilation target of any candidate. Does not
+    natively address R11 (needs the same bookkeeping bolt-on as Temporal).
+
+(f) A Postgres-native path - Hatchet, or adopting/forking a small OSS
+    implementation of the documented Postgres-durable-execution pattern
+    (e.g. resonate-pg) - uniquely consolidating D3's session log, D4's
+    placement-resolver, D6's durability layer, and D8a's dataset catalog
+    onto one already-required piece of infrastructure. Lightest operational
+    footprint of any path; newest as an adopted pattern, though built on the
+    most proven underlying primitive (Postgres) of any candidate considered.
+```
+
+**Recommended next step (revised again)**: spike the SQL-session scenario against Restate and Dapr in bookkeeping-only mode (as before), and add a third spike against a Postgres-native path (Hatchet, or forking resonate-pg directly) specifically testing whether the placement-resolver and session log can genuinely share one Postgres instance with the durability layer. Evaluate Conductor separately and more lightly, specifically for how directly its native MCP gateway and declarative workflow format could serve D9c and the IR-to-engine compilation step (D8), before committing effort to a full spike. Run all of this alongside the D9 policy decision, since composability cost is coupled to whichever engine is chosen.
+
+**Everything downstream of this decision in this design (D7-D10, and every capability spec/task in this change) is written in engine-agnostic terms** - references to "step execution," "durable history," and "child/tracked execution" describe properties that a chosen engine is expected to provide, not a commitment to any specific engine's terminology or mechanism.
+
+### D7: Secrets travel with the request (scoped, referenced, broker-backed), never with the container
+
+Secrets (API keys/credentials that steps need to call external services) are handled under the following model, enabled by two facts about the environment: the docker services are trusted platform-authored code, and they do not hold long-lived authenticated clients/connections. Together these eliminate the active-exfiltration and credential-caching threats, reducing the problem to avoiding accidental residue.
+
+**Secret scope taxonomy** (a distinct axis from the data scopes in D1):
+
+| Secret scope | Owner | Shared across | Isolation boundary |
+|---|---|---|---|
+| workflow-writer (main case) | the workflow-writer | every run/session of that workflow-spec | the workflow-spec / writer identity |
+| user (secondary case) | the end-user | only that user's session | the session |
+
+Writer-scoped secrets are analogous to `static` data (stable, shared across all runs, referenced by the spec, server-side, invisible to the end-user); user-scoped secrets are analogous to `session` data (per-user, session-lived, provided at runtime). Platform-shared secrets are not required.
+
+**Rules:**
+
+1. **Referenced, never inlined.** The DSL references a secret by name + scope; the concrete value is never embedded in the workflow-spec. This mirrors the data-binding model in D1/D4.
+2. **Per-request injection, never environment variables.** Environment variables bind a secret to the container's whole lifetime, which conflicts with pooling: a pooled container reused across invocations (potentially across different workflow-writers) would retain the prior secret. Secrets are injected per-invocation into the request instead, so a pooled container stays "blank" between calls and the isolation boundary is enforced by construction.
+3. **Push-by-value is acceptable here.** Because services are trusted and non-caching, the worker may resolve the secret and push it into the request payload (over in-cluster TLS). The heavier capability-token / pull-from-broker-by-the-container model is not required, since there is no active-exfiltration or credential-caching threat to defend against.
+4. **Resolve inside the step's execution; keep only references in durable history.** Durable-execution engines commonly record step inputs/outputs in a durable history/log (this is a property of the class of engine under consideration in D6, not specific to any one of them). Raw secrets MUST NOT be passed as workflow/step arguments (that would persist them at rest, replayable, regardless of which engine is eventually selected). The worker resolves the secret from the broker *inside* the step's execution; only a scoped reference ever appears in recorded arguments/history. Encrypting payloads at rest via the engine's serialization/codec layer, if it offers one, is recommended as defense-in-depth.
+5. **User-secret lifetime rides the session.** A user-provided secret is stored in the broker under a session-scoped path with a TTL matching the session; workflows hold only a session-scoped reference. This survives session rehydration/replay (the reference re-resolves within TTL) and is collected with the session.
+6. **Secret-consuming external calls are side effects, not memoized.** Calls that use a secret to reach an external service are non-deterministic side effects and are excluded from the (input, operation) -> output memoization cache (D3). Consequently secrets never enter a content hash, and key rotation never invalidates cached results. This includes calls to external LLM/agent APIs (see D9's agent-directed composition note) - no additional secrets-model work is needed for that case, it already falls under this rule.
+
+**Rationale**: The trusted, non-caching service environment collapses the secret-isolation problem to accidental-residue avoidance, which per-request injection + resolve-inside-step-execution handles; the remaining substantive decision is the scope/ownership model and its differing isolation boundaries (writer vs. session).
+
+**Alternatives considered**: Environment-variable injection (rejected - incompatible with pooling, per rule 2). Capability-token / pull-from-broker-by-the-container model (deferred - stronger, but solves an active-exfiltration threat that does not exist for trusted services; revisit if untrusted service images are ever allowed). Passing secrets as workflow arguments (rejected - persists them in durable history). The specific secrets-broker product is intentionally left open (see Open Questions).
+
+### D8: DSL splits into an authoring surface and a stable IR; the IR has static shape but dynamic cardinality/path
+
+The DSL is deliberately split into two layers:
+
+```
+   AUTHORING SURFACE (what a writer types)  --synthesize once-->  IR (what runs)
+   e.g. a declarative document, or a code-      static, versioned graph of
+   based builder; MAY use non-deterministic     steps/bindings/writes/secrets/
+   constructs, since it only ever runs at        outputs; THIS is what the
+   author/publish time, never at workflow         scheduler and the execution
+   run time                                       engine's interpreter consume
+```
+
+This mirrors the Terraform/Pulumi/CDK "synthesize a plan once, execute the plan" pattern. It resolves a potential conflict with D6: several candidate execution engines require deterministic workflow-level code, but the *authoring* language does not have to be, because the authoring step runs once, out of band, and only its static output (the IR) is ever interpreted at run time - true regardless of which engine D6 eventually selects. It also decouples "what concrete syntax do we ship" (a UX choice, could be plural - e.g. a simple declarative surface for common cases and a code-builder for power users) from "what structure must the runtime agree on" (a hard contract, decided here regardless of surface syntax or engine).
+
+The IR is built from: a `WorkflowSpec` (metadata, `sessionState` declarations, steps, outputs); a `Step` (calls a registered service function; declares `reads` and optional `writes` bindings and secret references); a `Binding` (a discriminated source: `static` reference, `session` reference, `request` parameter, another step's output, the current item within a `forEach` body, a literal constant, or a `compute` expression - see D10); and a `WriteTarget` (a session key a step's output may be committed to, gated by the service's own change-detection signal from D4). Interactivity and seed/fallback sourcing are declared once per session key (see D8a), not repeated per binding.
+
+Two structural properties fall out of this:
+
+- **The dependency graph is inferred from data references**, not separately declared: a binding of `{ from: step, id: X, output: Y }` *is* the dependency edge. An explicit ordering declaration remains available as an escape hatch for steps that must be sequenced without a data dependency (e.g. side-effect-only ordering).
+- **Every workflow-spec has a derivable signature**: walking the IR for `request`-scoped bindings yields the caller-supplied parameter list; the presence of any `session`-scoped binding marks the workflow as session-requiring. This signature can be published through the same registry/discovery mechanism already used for service OpenAPI specs (D5) - workflows become discoverable to the frontend the same way services are discoverable to workflow-writers.
+
+Real control-flow needs (conditional branching, and iteration over a collection whose size is unknown until run time) are supported without abandoning static analyzability, by keeping the **shape** of every possibility static while allowing only **cardinality** (how many map iterations) and **path** (which branch) to be dynamic:
+
+- A **branch** construct statically declares every possible case (plus a default); only one case executes per run, but the scheduler can pre-analyze every case's service calls, secrets, and placement implications ahead of execution.
+- A **map/forEach** construct statically declares the shape of a single iteration (which service it calls, its reads/writes/secrets); only the iteration count is resolved at run time, from a runtime-sized collection. Each iteration executes as an independently tracked, durable unit (see D9), so partial failure only re-runs the failed iteration.
+
+**Rationale**: Separating authoring syntax from a stable IR avoids over-constraining the DSL's surface syntax by any one runtime engine's determinism requirements, and keeps "static, mostly-static, or dynamic" a property of specific IR constructs (branch, map) rather than an all-or-nothing property of the whole graph.
+
+**Alternatives considered**: A single authoring-language-is-the-runtime-representation approach (rejected - would force the authoring surface to inherit a specific engine's determinism constraints directly, and would make supporting multiple authoring surfaces, or later changing the engine per D6, much harder). A fully static, fixed-shape DAG with no branch/map constructs (rejected per real workflow-writer needs identified during design - branching and per-item iteration are common, not edge cases).
+
+### D8a: Concrete authoring surface syntax
+
+Resolves the "authoring surface syntax" open question left by D8, worked out by writing a full example workflow-spec against every IR construct decided so far - which surfaced several refinements the abstract IR description hadn't captured.
+
+**Format: restricted YAML, JSON-compatible, JSON-Schema-validated.** YAML is a strict superset of JSON structurally, so programmatic generation (D8's synthesize-once path) can emit plain JSON with zero translation, while hand-editing/review benefits from YAML's comments and lower punctuation noise. This also matches the Kubernetes-adjacent culture already present in this design. A **restricted profile** deliberately disallows anchors (`&`), aliases (`*`), merge keys (`<<`), and custom tags - these reintroduce non-local reference indirection that would complicate the UI's decompile requirement (D10's rationale for banning embedded code applies here too, at smaller scale). A single JSON Schema validates the parsed structure regardless of whether the source was YAML or raw JSON. Field naming is camelCase throughout, matching the OpenAPI/JSON conventions the registry already uses.
+
+**`sessionState` is declared once per logical key, not repeated per binding.** Writing a concrete example surfaced a real redundancy risk: the same session key is often read and written by multiple steps, and repeating `interactivity`/`fallback` at every site risked inconsistency across sites for the same key. These now live in a single top-level `sessionState` declaration per key; individual `reads`/`writes` bindings reference only `{ from: session, key: ... }` / `{ to: session, key: ... }`.
+
+```yaml
+sessionState:
+  sandbox_dump:
+    interactivity: interactive
+    fallback:
+      from: static
+      ref: "urn:workflow-platform:dataset:team-analytics/northwind:v2"
+```
+
+**Static-scope interactivity is not a DSL concept at all.** Unlike session state, a static dataset's interactivity is a property of the dataset itself (registered once in the static catalog, alongside D5-style capability metadata) - not something each workflow-writer redeclares per use. Only session-scoped state genuinely varies by workflow (the same service can be interactive in one workflow, batch in another), so `interactivity` only ever appears in `sessionState`.
+
+**A new binding source, `{ from: item }`, for `forEach` bodies.** Needed for a loop body to reference its current iteration item. Deliberately minimal - it exposes the raw item value only; field extraction from a compound item reuses `compute` + JSON-Logic's `{"var": "..."}` operator rather than inventing a second path-expression syntax.
+
+**An explicit `dependsOn: [stepId, ...]` field** realizes D8's already-required escape hatch for ordering steps with no data dependency between them.
+
+**A workflow-spec's derived signature stays flat, named, and typed - never a path into an arbitrary nested request body.** `{ from: request, param: "query" }` means "the workflow's own declared parameter named `query`," analogous to a function argument - flattening a caller's own nested internal state into that clean parameter is the caller's responsibility, not the DSL's. Two cases remain, both already covered by existing machinery rather than new syntax: (1) a parameter's *value* may itself be a compound/nested object, passed through opaquely to whichever step's service consumes it, needing no DSL-level path syntax; (2) if the *workflow itself* needs to inspect a nested field of a parameter (e.g. for a branch selector), wrap it in a `compute` binding and use JSON-Logic's own `{"var": "a.b.c"}` operator - reusing the same mechanism as `{ from: item }`'s field extraction rather than adding a second path language.
+
+**Static dataset references use a purpose-built URN scheme; service references correctly stay OCI-native.** A bare human-typed string (`ref: catalog/northwind`) is exactly the kind of loosely-coupled-by-convention identifier that breaks once two teams create similarly-named datasets, or someone updates one in place without any signal to existing workflows. The proven fix pattern - a mutable tag resolving to an immutable digest - is worth keeping, but OCI reference syntax is the wrong container for it: OCI refs are tied to a specific protocol and artifact type (a pullable container image), and using that syntax for a dataset would overclaim semantics that aren't true (fetchable via `docker pull`, lives in a container registry). Services correctly keep real OCI references, because they genuinely are OCI images - no overclaim there. Static datasets get a URN (RFC 8141) instead - purpose-built for a location-independent, persistent name resolved by the platform's own registry, without implying any retrieval protocol:
+
+```
+urn:<platform>:<resourceType>:<namespace>/<name>[:<tag> | @<alg>:<digest>]
+
+urn:workflow-platform:dataset:team-analytics/northwind:v2
+urn:workflow-platform:dataset:team-analytics/northwind@sha256:9f2c8e1a...
+```
+
+The `resourceType` segment (`dataset` today) keeps the scheme extensible to other globally-shared, versioned resource kinds later without cross-kind name collisions. Resolving a tag to a digest here is the same operation D2 already performs for session snapshots - the static catalog's resolved digest and D2's content-addressed snapshot key are the same kind of identifier applied to two different lifecycle stages, not a coincidence.
+
+This implies a **dataset resource catalog** (tag → digest → storage location) as its own lightweight component, conceptually parallel to but distinct from the container/OCI registry used for services, since the underlying artifacts are genuinely different kinds of things.
+
+**The general collision-resistance rule this surfaced**: identifiers need namespace + tag/digest treatment specifically when the referent is global and shared across an unbounded set of authors (the static catalog). Identifiers already scoped by an orthogonal identity don't need it, because collision is structurally prevented by that outer scope already - a session key is scoped by session identity, a secret reference is scoped by writer identity (D7), so plain human-chosen strings remain fine for both.
+
+**Rationale**: Every refinement here was found by attempting to write a complete, concrete example against the already-decided abstract IR, rather than staying at the abstract level - confirming that concretizing syntax is a genuine design activity, not just a mechanical transcription of prior decisions.
+
+**Alternatives considered**: A bespoke dotted-path syntax for `request` parameters (rejected - would create a second path-expression language alongside JSON-Logic's, for no added expressiveness). A custom URI scheme like `dataset://...` for static refs (rejected in favor of a formal URN - a custom scheme still gestures at being a fetchable location the way `http://` does, which is a smaller but similar overclaim to using OCI syntax outright). Reusing literal OCI reference syntax for datasets (rejected - see above; the pattern is worth keeping, the literal format is not). Bare UUIDs as the primary static reference form (rejected - globally unique but not human-readable, losing namespace/hierarchy context that a URN retains).
+
+### D9: Service composability - composite registry entries, a mandatory-by-default policy, and agent-directed composition as one case of it
+
+A durable-execution engine's child/step-execution primitive - a running workflow can start one or many additional tracked executions, including dynamically and in a loop, without the parent terminating, with each getting its own durable tracking, retries, and secret/placement resolution - is the general mechanism behind D8's map construct, and is available generally wherever a unit of work needs to fan out dynamically without leaving the orchestrator's visibility. (The concrete shape of this primitive is engine-dependent - see D6 R11/R12 - native child-workflow-style constructs, actor-to-actor calls, and uniform durable invocations are the three shapes considered.)
+
+This surfaced a broader question during design: what happens when a trusted service, while executing a single step, itself needs to call *other* registered services (e.g. a "batch enrichment" service iterating internally and calling an enrichment service per item)? Two shapes were identified:
+
+```
+   (a) HIDDEN LOOP: the service calls other services' raw endpoints directly
+       from inside its own container code. Simple to write, but invisible
+       to the orchestrator - forfeits per-item retry, secret scoping (D7),
+       and placement (D4) for every call it makes, and a crash mid-loop
+       can cause the engine to retry the WHOLE step, double-processing
+       already-completed inner calls.
+
+   (b) ORCHESTRATED LOOP: the service's internal calls to other services
+       are themselves tracked as child/step executions, preserving every
+       guarantee (D2,D3,D4,D5,D7 - D6 is the open engine choice itself,
+       not a guarantee to preserve) per inner call, at the cost of the
+       calling service needing to act as an orchestration client rather than a
+       plain HTTP service.
+```
+
+This has since resolved into three concrete decisions, unresolved only in the mechanism's engine-dependent cost (D6).
+
+**D9a: Composite registry entries.** A registry entry may be either a **leaf** (a raw container, as today) or a **composite** - itself a workflow-spec, published under an invocable identity via its derived signature (D8), executed as a tracked child execution when invoked as a step. This required no new mechanism: a composite's internals are ordinary IR, resolved through the exact same scheduler/capability/secret pipeline as any top-level workflow. There is no "transport" question for this case at all, because a composite never leaves the orchestrated pipeline - it is simply a workflow-spec referenced by another workflow-spec.
+
+**D9b: Inter-service composition is mandatory-by-default; bypass requires a declared, reviewed exception.** For the harder case - a leaf service's own container code wanting to call *other* registered services on its own initiative (shape (a)/(b) above) - the default is orchestrated (b), not hidden (a). This extends a pattern already used repeatedly in this design (D4/D4a: affinity is optional but never silent; D5a: trust is earned, not assumed): the safe path is the default; the risky path is never a silent per-container choice. A service that wants to bypass the orchestrator-aware path must declare it explicitly (transport + forfeited guarantees named), and that declaration is subject to the same trust-tier review as any other capability claim (D5a) - it is not trusted on assertion alone. This is a **policy** decision, decidable now; only the **mechanism cost** of compliance (how expensive the orchestrator-aware SDK is to adopt) stays coupled to D6, since that varies materially by engine family (Temporal's separate child-workflow SDK vs. Restate/Dapr's "same primitive as any other call").
+
+A composing service's capability declaration (extending D5) records whether its reachable target set is **enumerable** (a fixed list, known at registration) or **open** (determined per-invocation by an external decision process), plus the transport: `composes: { via: sdk | http | cli | mcp, targets: [...] | open }`.
+
+**D9c: Agent-directed composition is the `targets: open, via: mcp` case of D9b - not a separate IR construct.** An "agent-directed step" is not a distinct kind of step. It is an ordinary step invoking an ordinary registered service (an "agent-runner") whose own capability declaration is `composes: { via: mcp, targets: open }`. This collapses what earlier looked like bespoke agent machinery into the generic model:
+
+```
+   ALLOWLIST AND GOVERNOR ARE ORDINARY REQUIRED PARAMETERS, not new IR:
+   the agent-runner service's own OpenAPI signature declares `allowedTools`
+   and `governor` as required inputs, exactly like any other function
+   parameter. The DSL's already-generic "a step's binding must satisfy
+   every required parameter" rule (workflow-dsl) enforces "you must
+   supply an allowlist and a governor" with no agent-specific validation.
+
+   ENFORCEMENT happens in the composability layer (D9b), not the DSL:
+   the layer refuses out-of-allowlist calls and withholds secrets for
+   them at DISPATCH TIME, regardless of the agent-runner's own behavior -
+   the same dispatch-time enforcement any open-target composing service
+   needs, not something bespoke to agents.
+
+   THE GOVERNOR MUST BE DURABLE: its accumulated count/cost is checked
+   before each dispatch and persists across a crash-and-resume, or
+   durability (the very thing R6/R12 exist to provide) becomes an
+   accidental way to bypass the cap it's supposed to enforce.
+
+   PURE COMPUTE-BACKED TOOLS (D10) ARE EXEMPT from allowlist review:
+   a computed binding cannot invoke a service, touch a secret, or
+   produce a side effect by construction, so it can be offered to an
+   agent-runner invocation for free, without review.
+
+   MCP IS ONE TRANSPORT VALUE, not a separate subsystem: it sits
+   alongside sdk/http/cli in the SAME `via` enumeration. Its concrete
+   realization is a gateway that translates allowlisted OpenAPI
+   operations into MCP tool definitions dynamically, scoped per
+   invocation to that invocation's allowlist, and routes every tool
+   call back through the same dispatch/secret/governor path as any
+   other composed call - never a parallel bypass path. This also means
+   REST, CLI, and MCP become three projections of the same registry
+   entry + OpenAPI contract, not three independently maintained surfaces.
+```
+
+**Who drives the agent loop, resolved**: because the agent-runner is *a service*, invoked as *a step*, its execution lifecycle is ours end-to-end by construction, the same as any composing service - this settles in favor of the platform hosting the loop as part of step execution, not an externally-hosted agent driving it from outside. A genuinely different idea - exposing the registry *outward* as an MCP server to arbitrary third-party agent hosts (not a step inside any of our workflows at all) - remains a distinct, not-currently-in-scope product surface, noted here so it isn't confused with what D9c actually decides.
+
+A further, non-engine implication carried over from the original agent-composition finding: services reachable by an agent-directed (or any open-target) invocation cannot assume they are only ever invoked downstream of validation performed earlier in an authored DAG - such services need to validate their own inputs defensively, similar to a public API, rather than trusting pipeline context.
+
+**Rationale**: The technical mechanism for dynamic, non-terminating fan-out (a child/step-execution primitive) is already required for D8's map construct. Splitting "is a registry entry composite" (D9a, free), "is composition orchestrator-aware by default" (D9b, a policy decidable now), and "how is agent-directed composition expressed" (D9c, a specific case of D9b rather than a fourth thing) avoids inventing separate machinery for what turns out to be the same underlying model applied three ways.
+
+**Alternatives considered**: Treating agent-directed composition as a distinct IR construct with its own allowlist/governor validation (rejected - fully subsumed by D9b's generic composability model plus the DSL's already-generic required-parameter rule, with nothing lost). Treating composability as purely a service-author concern outside the platform's model (rejected as a permanent stance - D9b's mandatory-by-default policy, backed by D5a's trust tiers, closes this). Allowing agent-directed steps unrestricted registry access (rejected - the allowlist requirement keeps D7's secret-scoping model intact). Exposing the registry outward to third-party agent hosts as an alternative to D9c (not rejected, but explicitly out of scope here - a distinct product surface, not a variant of this decision).
+
+### D10: Pure, bounded computation is a `compute` binding evaluating a serializable logic expression - never embedded imperative code
+
+The funded UI authoring tool (see D8 background) must be able to open and *edit* arbitrary existing workflow-specs, not merely view them. This rules out embedding opaque imperative code as runtime content anywhere in a spec: arbitrary code is not decomposable into a visual model the way branch/map already are, so a spec containing it could never be fully edited by the UI. Code remains usable only as a *build-time generator* that emits ordinary IR (D8's synthesize-once pattern) - never as a construct interpreted at workflow run time.
+
+This still leaves a real need: branch selectors, map source collections, and simple derived values often require a small comparison or transform (e.g. "is this value above a threshold", "extract a field"). Rather than requiring a dedicated registered utility service for every such case, the IR gains a new binding kind:
+
+```
+Binding (extended further)
+  └── { compute: <logic-expression>, using: { varName -> Binding, ... } }
+```
+
+`compute` evaluates a bounded, serializable, side-effect-free logic expression against a data context built from its already-resolved `using` bindings. This is not "code" in the sense D9's discussion ruled out: it is total (no loops/recursion beyond bounded, pure array operators), side-effect-free, deterministic, and - critically - structurally decomposable into the same kind of nested operator/argument tree that visual rule-builder UIs already target natively, so it satisfies the UI's arbitrary-edit requirement rather than straining it.
+
+**JSON-Logic is selected over CEL.** Both were considered; JSON-Logic wins because it follows directly from this decision's own central requirement:
+
+```
+JSON-Logic is a JSON tree ({"==": [{"var":"category"}, "flagged"]}).
+Existing visual rule-builder components (e.g. react-querybuilder and
+similar) already emit/consume this shape natively - lower UI-build risk
+for the funded UI project than any alternative here.
+
+CEL is a compact STRING expression - richer typing, better fit with the
+Kubernetes-adjacent ecosystem already in play (admission policies,
+Envoy), but embedding it means either a text/code editor widget (which
+strains the "structurally decomposable" property that ruled out
+embedded code in D9 in the first place) or a bespoke CEL-AST-to-visual-
+tree mapping with no off-the-shelf equivalent to JSON-Logic's query
+builders.
+```
+
+CEL's advantages (richer typing, K8s-ecosystem familiarity) matter most for validating complex typed API objects, which is not this decision's use case - `compute` bindings operate over already-resolved, already-typed binding values. JSON-Logic's narrower operator set is a feature here, not a limitation, consistent with keeping this construct deliberately bounded.
+
+**Consequences:**
+
+- **Free to evaluate.** Because it is pure and deterministic, a `compute` binding evaluates inline within the execution engine's interpreter itself, whichever engine is eventually selected (D6) - no step/activity scheduling, no registry lookup, no placement decision (D4), no capability declaration (D5). It is structurally out of scope for the scheduler, not merely cheap.
+- **Secrets are structurally excluded.** A `compute` binding's `using` inputs SHALL NOT accept a secret reference. Combined with D7's rule that secrets resolve only inside a step's execution, this means a workflow-spec cannot leak a secret through a logic expression by omission rather than by enforced policy.
+- **Disambiguated from D8's dynamic map/forEach.** A logic language's own bounded array operators (e.g. map/filter/reduce over an already-resolved, finite array) are pure in-memory computation and must not be conflated with the DSL-level `map`/`forEach` construct, which fans out to services as tracked, durable child executions (D9).
+- **Narrows, rather than eliminates, the utility-leaf-service idea.** Utility services remain appropriate for transforms that are not pure/bounded (real I/O, heavier processing, domain-specific logic); `compute` bindings are preferred whenever a transform is pure and bounded, avoiding an ever-growing library of trivial registered services (compare, extract-field, threshold-classify, ...) each carrying a full registry entry and container.
+
+**Rationale**: Reuses a principle already present elsewhere in this design (D4 pushes mechanism into the scheduler, D5 pushes capability facts into the registry) - here, pure computation is pushed into a bounded expression rather than into either the IR's control-flow grammar (which stays free of a general expression language) or a proliferation of trivial services.
+
+**Alternatives considered**: A general expression/scripting language embedded in the IR (rejected - reintroduces the decomposability problem D9's code prohibition was meant to avoid, just with a friendlier syntax). A mandatory registered "utility service" for every simple comparison/transform (rejected as the default - unnecessary operational overhead and a step-execution round-trip for what is often a single comparison; remains available for the non-pure cases it's actually suited to). CEL (rejected in favor of JSON-Logic per the comparison above, primarily on UI-decomposability grounds).
+
+### D11: IR schema versioning is a whole-document tag, migrated lazily and forward-only
+
+The funded UI project has its own, independently-timed release cadence, separate from the platform backend - meaning the UI could plausibly lag behind whatever IR version the backend is producing at any given moment. This is a structural consequence of two funded workstreams moving independently, not a hypothetical edge case, and it is why versioning needs an explicit answer now rather than being deferred until the UI project starts.
+
+```
+VERSION TAG: a single, whole-document version field (e.g. irVersion: N),
+bumped only on BREAKING changes. Additive constructs (a new binding
+kind, a new step field with a sensible default) do NOT bump it.
+
+MIGRATION: forward-only, lazy-on-open. An old document is passed through
+a chain of pure migrator functions (v(n) -> v(n+1) -> ... -> current) the
+first time it is opened, then re-saved in canonical current-version form.
+This composes with the already-established behavior that a UI-driven
+save normalizes the document (comments/formatting may not survive a
+round-trip) - migration-on-open is one more reason a save might differ
+from what was loaded, not a new kind of behavior.
+
+VERSION-TOO-NEW CASE (the one the UI's independent cadence makes real):
+FAIL CLOSED with a clear "unsupported version" error. Never guess or
+best-effort-parse a version newer than what the reader understands.
+
+DEPRECATION: define a minimum supported window (e.g. current minus 2
+versions); require a batch migration sweep over stored specs before
+retiring old migrator code, rather than keeping every migrator forever.
+```
+
+Deliberately simpler than Kubernetes' storage-version/served-version split: that machinery exists to serve a public, multi-client API surface, whereas this is a closed, single-organization document format. A single stored version plus migrate-on-read is proportionate; multi-version serving can be revisited if a real need for it emerges later.
+
+**Rationale**: Answers the "IR schema versioning/migration" open question left by D8, specifically motivated by the UI project's independent timeline rather than treated as a generic best practice to defer indefinitely.
+
+**Alternatives considered**: Per-construct versioning (rejected for now - adds complexity with no clear benefit while the IR is authored/synthesized as a whole document per workflow-spec, not assembled from independently-versioned fragments). Kubernetes-style multi-version serving (rejected as premature - the operational cost isn't justified until there's a concrete need for the runtime to serve more than one IR version at a time).
+
+## Risks / Trade-offs
+
+- **[Execution engine decision left open]** D6 is deliberately unresolved rather than committed, following the R11 addressability gap and the composability/agent-directed-composition stress tests. -> Mitigation: every other decision, IR construct, and capability spec in this change is written engine-agnostically by design, so this can be resolved later (ideally via a short spike, per D6's recommended next step) without invalidating what's already captured.
+- **[Operational weight varies significantly by candidate]** The engine families under consideration in D6 range from light (already-K8s-native, or a lightweight runtime) to heavy (a self-hosted cluster, or operating a second distributed system alongside K8s in a hybrid). -> Mitigation: operational weight is tracked explicitly as a comparison dimension in D6 rather than an afterthought; factor it into whichever spike is used to resolve the decision.
+- **[Determinism constraints, where applicable, could leak into the authoring surface]** Several candidate engines require deterministic workflow-level code. -> Mitigation: this constraint, where it applies, is absorbed once in the generic DSL-to-engine interpreter, not per workflow-spec; D8 isolates it to the IR rather than the authoring surface, and this holds regardless of which engine D6 ultimately selects.
+- **[A secondary spawn-execution backend may add operational surface]** Delegating World-1 spawn-style steps to a separate backend (e.g. Kubernetes Jobs) alongside the primary engine, if pursued, introduces two systems instead of one. -> Mitigation: keep any such delegation path narrow (a single well-defined "run this as a spawned job" step type) rather than a full second orchestration surface; whether this is needed at all depends on which engine D6 ultimately selects.
+- **[COW availability varies by service]** Copy-on-write/incremental snapshotting is confirmed for the SQL-dump case but is a per-service capability that may not be available for every heavy-setup service, making the "tens of GB" cell of the D1 matrix expensive for some services. -> Mitigation: D5's capability declaration makes this visible per-service; the scheduler (D4) can refuse to promote non-COW services to shared/pooled placement and fall back to per-request cost acceptance.
+- **[Pooling reintroduces isolation risk]** Reusing warm containers across invocations (for performance) is exactly the mechanism that could leak state across sessions if a service is misclassified or its capability declaration is wrong. -> Mitigation: content-addressing (D2) makes correctness structural rather than relying on service-author discipline, but the capability declarations themselves (D5) are a trust boundary that should be validated (e.g. registry-side checks, conformance tests) - not yet designed.
+- **[Secret residue in trusted code]** Push-by-value (D7 rule 3) places a secret in a trusted container's memory for the duration of a call; a bug could log or persist it. -> Mitigation: log-payload redaction, best-effort in-memory clear post-call, and payload-at-rest encryption if the eventually-selected engine offers a serialization/codec hook (D7 rule 4). Residual risk is accepted because services are trusted and non-caching; it would be unacceptable for untrusted images.
+- **[Threat model depends on trust assumption]** D7's simplifications (push-by-value, pooling across sessions) hold only while services are trusted platform code. -> Mitigation: recorded as an explicit non-goal; introducing untrusted images would require revisiting D7 (capability tokens, sandboxing, per-tenant isolation).
+- **[Composition bypass requires ongoing registry-side vigilance]** D9b's mandatory-by-default policy closes the silent-escape-hatch risk at the policy level, but its guarantee depends on declared exceptions actually being reviewed and on the trust-tier/runtime-invariant machinery (D5a) actually catching undeclared bypasses in practice. -> Mitigation: treat an undeclared bypass exactly as any other false capability declaration (D5a's demotion + alert path), rather than as a separate enforcement problem; the mechanism cost of full SDK compliance still varies by engine (D6).
+- **[UI-editability constrains the IR more than a runtime-only design would]** Because a funded UI tool must later open and edit arbitrary existing specs, constructs that would otherwise be tempting shortcuts (embedded imperative code, an unbounded expression language) are foreclosed now, even though the UI itself is not being built yet. -> Mitigation: treated as a feature, not just a constraint - D10's bounded logic-expression approach satisfies both the immediate need and the future UI requirement simultaneously; revisit only if a real need emerges that a bounded logic expression genuinely cannot express (route those to a registered service instead, per D10).
+- **[Agent-directed composition is unbounded by nature]** Unlike branch/map, an agent-directed step's call sequence cannot be statically pre-analyzed. -> Mitigation: D9's allowlist and governor requirements bound the blast radius (which services/secrets are reachable, and how much the loop can cost/run) even though the sequence itself remains dynamic; services reachable this way should validate inputs defensively rather than trust caller context.
+
+## Migration Plan
+
+Not applicable in the traditional sense - this is a net-new platform with no prior system to migrate from. Sequencing of build-out is captured in tasks.md.
+
+## Open Questions
+
+- **Execution engine selection (D6)**: Left deliberately open. Five candidate paths: (a) Temporal + a hand-built placement-resolver, (b) Temporal + Ray hybrid, (c) Restate as a single system, (d) Dapr (Workflows + Actors) as a single system, (e) a DBOS-shaped thin library over Postgres. Recommended next step is a short spike on the SQL-session scenario against Restate and Dapr specifically, in placement-bookkeeping-only mode (no service rewrites), run alongside the D9 policy decision rather than after it.
+- **Placement-bookkeeping vs. actor-hosting trade-off**: If Dapr (or a similar actor framework) is pursued, whether to use it only for durable placement bookkeeping (no service changes) or to additionally rewrite a narrow subset of genuinely setup-heavy services to embed the Actor SDK for true process affinity is a distinct, follow-on decision - not required to resolve D6 itself.
+- **Secrets broker product**: The secrets injection model is decided (D7), but the specific broker/store (e.g. Vault, a cloud secret manager, or an encrypted-at-rest store decrypted worker-side) is intentionally left open. The spec is written broker-agnostic.
+- **Dataset resource catalog product/implementation**: D8a decides that static datasets need their own tag→digest→storage-location catalog, conceptually parallel to the container/OCI registry but not the same system; the concrete implementation (bespoke service vs. adapting an existing artifact-registry product) is not yet chosen.
+- **Composition mechanism cost**: D9b decides the policy (mandatory-by-default, declared exceptions); the concrete SDK/mechanism cost of compliance remains coupled to the D6 engine decision.
+- **Outward-facing MCP exposure**: Exposing this platform's registry to arbitrary third-party agent hosts (distinct from D9c's internal agent-runner-as-a-step case) is a separate, real idea not designed here.
+
+**Resolved this round** (previously listed here as open; concrete decisions now captured in the Decisions section above): JSON-Logic vs. CEL (D10); service composability model - composite registry entries and the mandatory-by-default policy (D9a/D9b); agent-directed/MCP composition, unified as a specific case of the composability model rather than a separate design (D9c); authoring surface syntax - YAML/JSON restricted profile, `sessionState` declarations, `{from: item}`, `dependsOn`, flat request signatures, and the URN scheme for static dataset references (D8a).
+- **Placement-resolver/routing mechanism**: D4 decides that placement is fused from three sources and that affinity is optional, but not the concrete mechanism that routes an actual call to a specific service replica. Whether this is a bespoke resolver, a service-mesh consistent-hash policy, or a native engine primitive (D6 R11) depends materially on the D6 outcome.
+
+**Resolved this round** (previously listed here as open; concrete decisions now captured in the Decisions section above): IR schema versioning/migration (D11); snapshot auto-promotion thresholds (D4a); capability declaration trust/validation (D5a); session snapshot retention for undo/time-travel (D3a). The exact numeric defaults in D4a and the specific conformance-test implementation in D5a remain tunable/to-be-implemented, but the model itself is no longer open.
