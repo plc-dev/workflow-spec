@@ -60,6 +60,17 @@ The registry SHALL expose registering a new image (with its initial OpenAPI spec
 - **WHEN** the workflow platform's conformance pipeline completes a conformance run for an already-registered image digest
 - **THEN** the registry SHALL accept a trust-tier update from that pipeline without requiring a platform-developer-privileged action
 
+### Requirement: CLI-invoked functions accepting heavy data comply with a mandated transport contract, not a discovered capability
+Where a registered function is invoked via the `cli` transport and accepts a binding classified as heavy/dataset-scoped, the registry SHALL require that function to comply with one universal, platform-mandated calling convention (a local filesystem path argument plus a content-hash-derived state key argument), rather than treating transport shape as a per-function capability the registry discovers or that a function author may vary. This is distinct from, and SHALL NOT be folded into, the discovered capability metadata (mutates/materialization-cost/COW/change-detection) that this registry captures elsewhere.
+
+#### Scenario: A CLI function accepting heavy data is onboarded against one fixed contract
+- **WHEN** a CLI-invoked function that accepts a heavy/dataset-scoped binding is registered
+- **THEN** the registry SHALL require it to accept a local-path argument and a state-key argument in the platform's one mandated shape, and SHALL NOT accept an alternative, function-declared transport shape in its place
+
+#### Scenario: Transport shape is not queried as a discovered capability
+- **WHEN** the placement/scheduling layer requests a CLI-invoked function's capability metadata
+- **THEN** the returned metadata SHALL contain only the existing discovered facts (mutation, materialization-cost class, COW support, change-detection), and SHALL NOT contain a per-function transport-shape field, since transport shape is fixed by the mandated contract rather than discovered per function
+
 ### Requirement: Registry entries represent service images only
 A registry entry SHALL represent a single service image and SHALL NOT represent a workflow-spec. The registry SHALL NOT provide a mechanism for publishing a workflow-spec as an invocable registry entry.
 

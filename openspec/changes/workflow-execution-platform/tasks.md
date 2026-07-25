@@ -35,6 +35,7 @@
 - [ ] 2.9 Implement digest-pinned resolution for workflow-spec step bindings at authoring time (design.md D12). Deferred: this is really a DSL-compiler concern (task 5.3) - the registry already *exposes* digest-pinned entries by being keyed on digest (`getEntry`/`getPlacementFacts`, 2.1/2.8), so no DSL-authoring-tool logic was built here.
 - [x] 2.10 Implement privilege-split write paths: `registerImage` reachable only by platform developers; `recordTrustTier` reachable by the workflow platform's own conformance pipeline, not requiring developer involvement per update (design.md D12). Done: the split is structural, not a runtime permission check - `registry/src/admin.js` exports ONLY `registerImage`, `registry/src/conformance.js` exports ONLY `recordTrustTier`; nothing in a hypothetical runtime-facing module could import/call `registerImage`. No real auth/RBAC system exists yet in this repo (out of scope here) - this establishes the structural boundary a future auth layer would enforce.
 - [ ] 2.11 Design the deferred re-pin/upgrade flow for moving an already-authored binding to a newer image digest (design.md D12, noted as a real but not-yet-designed affordance). Deferred: design.md D12 itself flags this as "not yet designed" - inventing it now would pre-empt an unmade decision rather than implement an already-made one.
+- [ ] 2.12 Extend the registry's onboarding requirements with the mandated CLI heavy-data transport contract (`--data-file <path> --state-id <key>`, universal, not per-function-discovered) for any CLI-invoked function accepting a heavy/dataset-scoped binding (design.md D17)
 
 ## 3. Session & state layer
 
@@ -59,6 +60,7 @@
 - [ ] 4.5 Implement promotion/demotion thresholds per design.md D4a's cache-admission model, exposed as tunable scheduler parameters (starting defaults, not fixed constants)
 - [ ] 4.6 Implement capacity-aware LRU eviction among pinned entries when the pinned-residency budget is exceeded (design.md D4a)
 - [ ] 4.7 Wire trust-tier gating (2.5) into placement decisions - never share/pool/COW-reuse below production-proven (design.md D5a)
+- [ ] 4.8 Implement CLI heavy-data transport volume/local-state attach-on-promote, detach-on-demote for warm CLI-invoked functions, reusing 4.4-4.6's promotion/demotion hooks rather than a new lifecycle concept (design.md D17)
 
 ## 5. Workflow DSL
 
@@ -85,6 +87,8 @@
 - [ ] 5.13a Implement fail-closed handling for documents newer than the reader understands (design.md D11)
 - [ ] 5.13b Define the minimum supported version window and the migration-sweep process required before retiring an old migrator (design.md D11)
 - [ ] 5.14 Implement the generic "step binding satisfies every required parameter" validation rule (design.md D9c relies on this instead of an agent-specific construct)
+- [ ] 5.15 Implement the `itemResource` binding kind - `{ from: itemResource, itemId: <binding>, path: <locator> }` - resolving at run time against the per-instance flattened cache from 12.4 into either a `static`-equivalent dataset reference or a plain passed-through value (design.md D16)
+- [ ] 5.16 Implement JSON-Pointer-style (RFC 6901, deeply nested) path addressing for `itemResource` bindings, deliberately distinct from 5.6c's flat-only `request`-parameter rule (design.md D16)
 
 ## 6. Execution engine
 
@@ -160,3 +164,15 @@
 - [ ] 11.11 End-to-end test: a fork is self-contained and executes correctly with no run-time dependency on its source workflow-spec, even after the source publishes a new version
 - [ ] 11.12 End-to-end test: a fork containing an unresolved inherited writer-scoped secret reference is treated as an unsatisfied binding; re-binding it to the forking writer's own secret makes the fork valid
 - [ ] 11.13 End-to-end test: fork lineage remains inspectable and transitive across a chain of forks
+
+## 12. Item Pool integration
+
+- [ ] 12.1 Select/confirm the concrete Item Pool integration protocol and product (open question, design.md D15 Open Questions)
+- [ ] 12.2 Implement per-item-instance resolution: on first reference anywhere on the platform, fetch the full manifest for `itemInstanceId` from the Item Pool (design.md D15)
+- [ ] 12.3 Implement the eager whole-manifest flattening walk: classify each leaf as dataset-shaped (mirror bytes into the existing dataset resource catalog via 5.6d/D8b, minting a URN) or plain-value (pass through inline), trusting the Item Pool's own self-description with no tiered trust model (design.md D16)
+- [ ] 12.4 Implement the memoized `itemInstanceId -> { path -> resolved dataset-reference | value }` cache, rebuildable by re-querying the Item Pool, TTL/GC-safe under the same posture as 3.6/3.7 (design.md D15)
+- [ ] 12.5 Feed dataset-shaped leaves from 12.3 into the existing static-dataset materialization/placement path (3.4/3.5/4.1-4.7) completely unchanged - no parallel materialization mechanism
+- [ ] 12.6 End-to-end test: two learners resolving the same item instance share the mirrored dataset (single fetch/mirror, cache hit on the second reference); two learners on different instances of the same item type remain isolated
+- [ ] 12.7 End-to-end test: an item instance's resolved resource map stays stable for the life of one learner attempt/session, per design.md D15's confirmed instance-stability requirement
+- [ ] 12.8 End-to-end test: a transient Item Pool outage is covered by ordinary step retry/backoff (D6/R7), with no bespoke Item-Pool-specific retry logic
+- [ ] 12.9 Document that item confidentiality/visibility and item-type/instance shape consistency are delegated entirely to the Item Pool and external authoring tooling - not platform invariants (design.md D16)

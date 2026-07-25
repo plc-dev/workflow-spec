@@ -296,6 +296,32 @@ Every compiled IR document SHALL carry a whole-document version tag, named `irVe
 - **WHEN** a new binding kind or a new optional step field with a default value is added to the IR schema
 - **THEN** this SHALL NOT require bumping the version tag, since existing documents remain valid without migration
 
+### Requirement: An `itemResource` binding kind resolves a request-scoped item identifier and path into an item-type resource, deferring the shared-vs-inline classification to run time
+The DSL SHALL support an `itemResource` binding kind referencing an item-instance identifier (typically itself a `request`-scoped binding) and a path locator into that instance's resolved resource manifest. The workflow-spec SHALL NOT declare, at authoring time, whether a given path resolves to a shareable dataset reference or a plain value - this SHALL be determined at resolution time from the actual resolved manifest.
+
+#### Scenario: An itemResource binding resolves to a dataset reference
+- **WHEN** an `itemResource` binding's path resolves, for the current item instance, to a heavy/dataset-shaped resource
+- **THEN** the system SHALL treat the resolved binding as an ordinary static-scope dataset reference, eligible for the same materialization/placement/pooling treatment as any authoring-time static binding
+
+#### Scenario: An itemResource binding resolves to a plain value
+- **WHEN** an `itemResource` binding's path resolves, for the current item instance, to a light/plain-value resource
+- **THEN** the system SHALL pass the resolved value through to the consuming step directly, without invoking dataset materialization machinery
+
+#### Scenario: One workflow run binds to exactly one item instance
+- **WHEN** a workflow-spec containing one or more `itemResource` bindings is executed
+- **THEN** every `itemResource` binding in that run SHALL resolve against the same single item-instance identifier; the DSL SHALL NOT provide a construct for binding different `itemResource` references within one run to different item instances
+
+### Requirement: `itemResource` path addressing is arbitrarily nested, using a locator syntax rather than the flat-only request-parameter rule
+An `itemResource` binding's `path` SHALL be permitted to address an arbitrarily deeply nested location within the resolved item manifest, using a structural locator syntax (e.g. JSON Pointer). This SHALL NOT be governed by the flat-parameter-name-only rule that applies to `request`-scoped bindings, since an `itemResource` path addresses into an externally-sourced document to determine what gets bound, rather than extracting a field from an already-bound in-memory value.
+
+#### Scenario: A deeply nested path is accepted
+- **WHEN** a workflow-writer declares an `itemResource` binding whose `path` addresses a location nested more than one level deep within the item manifest's structure
+- **THEN** the DSL SHALL accept the binding without requiring it to be flattened into a top-level named parameter
+
+#### Scenario: Path/manifest shape mismatches are not a compile-time DSL error
+- **WHEN** an `itemResource` binding's `path` does not exist within a given item instance's actual resolved manifest at run time
+- **THEN** the system SHALL surface this as a run-time resolution failure; the DSL SHALL NOT be required to detect this at compile time, since keeping a workflow-spec's `itemResource` paths consistent with an item type's resource shape is delegated to external authoring tooling and/or the item type's own authoring flow, not enforced by the platform
+
 ### Requirement: Deprecated IR versions require a migration sweep before retirement
 The system SHALL define a minimum supported version window and SHALL require a batch migration sweep over all stored workflow-specs below that window before retiring the migrators for versions outside it.
 
