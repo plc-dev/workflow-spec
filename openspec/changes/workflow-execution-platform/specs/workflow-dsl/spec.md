@@ -143,6 +143,24 @@ Where a registered service's function declares (via its `nesting_declaration` ca
 - **WHEN** an open-target step's allowlist binding resolves at authoring/compile time (because it is a `literal`)
 - **THEN** the scheduler MAY treat the allowlist's named functions as candidates for the placement/pooling admission model (per `execution-scheduling`), without being required to unconditionally pre-warm every listed target
 
+### Requirement: A nesting-target or callback-shaped parameter's literal binding resolves to a minted reference at run time, not its literal value directly
+Where a step's binding fills a nesting-target-typed parameter or a parameter declared with an OpenAPI `callbacks`/`webhooks` contract (see `service-nesting`), the DSL SHALL still require it to be authored as an ordinary `literal` binding naming the concrete target service and function, but the system SHALL resolve that binding at run time to a freshly minted, single-purpose callback reference rather than passing the literal value through unresolved.
+
+#### Scenario: A nesting-target literal resolves differently from an ordinary literal
+- **WHEN** a step's parameter is recognized as nesting-target-typed or callback-shaped, and is bound with a `literal` naming a target service and function
+- **THEN** the system SHALL resolve that binding, at run time, to a minted callback reference for that specific target rather than passing the literal's authored value through unchanged
+
+#### Scenario: Independent nesting slots on one function each resolve independently
+- **WHEN** a function declares more than one nesting-target-typed or callback-shaped required parameter
+- **THEN** the workflow-spec SHALL bind each independently, and each SHALL resolve to its own independently minted callback reference
+
+### Requirement: Binding a target to a declared callback contract requires an exact schema match at compile time
+Where a parameter's declared contract (an OpenAPI `callbacks`/`webhooks` object, see `service-registry`/`service-nesting`) specifies a request/response schema, the DSL SHALL validate at compile time that the bound target function's own native input/output schema exactly satisfies that declared schema, and SHALL reject the workflow-spec if it does not. This validation SHALL NOT accept a transform or adapter as a substitute for an exact match.
+
+#### Scenario: Compile-time rejection on schema mismatch
+- **WHEN** a workflow-spec binds a callback-shaped parameter to a target function whose native schema does not exactly satisfy the parameter's declared callback contract
+- **THEN** the DSL SHALL reject the workflow-spec at compile time, identifying the incompatible binding
+
 ### Requirement: Branch construct with statically enumerable cases
 The DSL SHALL support a branch construct that selects one of several statically declared sub-graphs to execute based on a runtime value, and SHALL require every possible case (including a default) to be declared in the IR even though only one is executed per run.
 

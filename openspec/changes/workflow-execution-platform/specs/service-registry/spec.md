@@ -60,16 +60,24 @@ The registry SHALL expose registering a new image (with its initial OpenAPI spec
 - **WHEN** the workflow platform's conformance pipeline completes a conformance run for an already-registered image digest
 - **THEN** the registry SHALL accept a trust-tier update from that pipeline without requiring a platform-developer-privileged action
 
-### Requirement: CLI-invoked functions accepting heavy data comply with a mandated transport contract, not a discovered capability
-Where a registered function is invoked via the `cli` transport and accepts a binding classified as heavy/dataset-scoped, the registry SHALL require that function to comply with one universal, platform-mandated calling convention (a local filesystem path argument plus a content-hash-derived state key argument), rather than treating transport shape as a per-function capability the registry discovers or that a function author may vary. This is distinct from, and SHALL NOT be folded into, the discovered capability metadata (mutates/materialization-cost/COW/change-detection) that this registry captures elsewhere.
+### Requirement: Every registered function complies with a mandated CLI dispatch contract, not a discovered capability
+The engine SHALL invoke every registered function via the CLI transport for ordinary step dispatch - never REST - regardless of whether a given call's bindings are heavy or light. The registry SHALL require every registered function to comply with one universal, platform-mandated calling convention: light bindings passed as ordinary CLI arguments, and any binding classified as heavy/dataset-scoped passed via a local filesystem path argument plus a content-hash-derived state key argument. Transport shape SHALL NOT be treated as a per-function capability the registry discovers or that a function author may vary, and SHALL NOT be folded into the discovered capability metadata (mutates/materialization-cost/COW/change-detection) that this registry captures elsewhere. A registered function MAY also expose a REST surface (e.g. for external callers outside the engine's own step dispatch), but the engine SHALL NOT use it to dispatch a step.
 
-#### Scenario: A CLI function accepting heavy data is onboarded against one fixed contract
-- **WHEN** a CLI-invoked function that accepts a heavy/dataset-scoped binding is registered
-- **THEN** the registry SHALL require it to accept a local-path argument and a state-key argument in the platform's one mandated shape, and SHALL NOT accept an alternative, function-declared transport shape in its place
+#### Scenario: Every function is onboarded against one fixed CLI contract
+- **WHEN** any function is registered, regardless of whether its bindings are ever heavy
+- **THEN** the registry SHALL require it to be invocable via the platform's mandated CLI convention, accepting a local-path argument and a state-key argument whenever a given call's binding is heavy/dataset-scoped, and SHALL NOT accept an alternative, function-declared transport shape in its place
 
 #### Scenario: Transport shape is not queried as a discovered capability
-- **WHEN** the placement/scheduling layer requests a CLI-invoked function's capability metadata
+- **WHEN** the placement/scheduling layer requests a function's capability metadata
 - **THEN** the returned metadata SHALL contain only the existing discovered facts (mutation, materialization-cost class, COW support, change-detection), and SHALL NOT contain a per-function transport-shape field, since transport shape is fixed by the mandated contract rather than discovered per function
+
+#### Scenario: A function's own REST surface, if any, is never used for step dispatch
+- **WHEN** a registered function exposes a REST endpoint in addition to its mandated CLI contract
+- **THEN** the engine SHALL dispatch that function's steps via the CLI contract only, and SHALL NOT invoke the REST endpoint as part of ordinary step execution
+
+#### Scenario: A service without a native CLI is not onboardable, and the registry SHALL NOT substitute a generated wrapper
+- **WHEN** an image intended for registration does not itself expose a CLI entrypoint satisfying the mandated contract (e.g. it exposes only a REST API)
+- **THEN** the registry SHALL NOT register it by generating a platform-side CLI wrapper in place of a native one, and registration SHALL be rejected or deferred until the image itself ships a compliant CLI entrypoint
 
 ### Requirement: Registry entries represent service images only
 A registry entry SHALL represent a single service image and SHALL NOT represent a workflow-spec. The registry SHALL NOT provide a mechanism for publishing a workflow-spec as an invocable registry entry.

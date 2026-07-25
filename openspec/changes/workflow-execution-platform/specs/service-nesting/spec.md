@@ -58,6 +58,35 @@ A computed binding (per the `workflow-dsl` capability's bounded logic expression
 - **WHEN** an open-target nesting service's invocation offers a purely computed transform as an available tool
 - **THEN** the system SHALL NOT require that transform to appear in the invocation's allowlist
 
+### Requirement: Orchestrator-aware nesting is realized via minted, single-purpose callback references, never a caller-specified target
+For the default orchestrator-aware path with an enumerable target set, the system SHALL realize each nesting slot as a freshly minted, single-purpose, opaque callback reference resolved at run time - never as a generic dispatch endpoint into which the nesting service specifies its own target. The nesting service's own request to that reference SHALL contain only the target function's own native input, with no field identifying the target.
+
+#### Scenario: A minted callback reference is single-purpose
+- **WHEN** a step's nesting-target parameter resolves at run time
+- **THEN** the resolved value SHALL be an opaque reference bound to exactly one target service and function, and SHALL NOT accept a caller-supplied target identifier at the point of use
+
+#### Scenario: The request to a callback reference carries no target-identifying field
+- **WHEN** a nesting service issues its own call to a resolved callback reference
+- **THEN** the request body SHALL contain only the target function's own declared input parameters, and the system SHALL determine the target from the reference itself, not from any field in the request body
+
+### Requirement: Callback-reference identity and governance context are derived server-side, never trusted from caller-supplied fields
+The system SHALL derive a callback reference's associated execution, step, target, and remaining governor budget entirely server-side, from the reference itself, and SHALL NOT accept or trust any caller-supplied claim of this context when handling a call to that reference.
+
+#### Scenario: A caller-supplied identity claim is ignored
+- **WHEN** a nesting service's call to a callback reference includes a field claiming a particular execution, step, or target
+- **THEN** the system SHALL determine the actual execution, step, target, and governor state from the reference itself, and SHALL ignore any such caller-supplied claim
+
+### Requirement: A generic callback-accepting parameter's compatibility is declared via the target function's own OpenAPI callbacks/webhooks contract, checked exactly, with no adapter
+Where a registered function accepts a parameter that is itself a callback URL invoked with a caller-defined request/response contract (as opposed to a platform-recognized nesting-target type), that function's own OpenAPI operation SHALL declare the exact contract via a `callbacks` (or `webhooks`) object. When a workflow-writer binds such a parameter to a concrete target function, the system SHALL require the target function's own native input/output schema to exactly satisfy the declared contract, and SHALL reject the workflow-spec otherwise. The system SHALL NOT provide an adapter or transform mechanism to bridge a schema mismatch.
+
+#### Scenario: An exactly matching target is accepted
+- **WHEN** a workflow-writer binds a callback-shaped parameter to a target function whose native input/output schema exactly matches the declared `callbacks` contract
+- **THEN** the workflow-spec SHALL be accepted, and the callback SHALL resolve to a minted reference for that target the same way an ordinary nesting-target parameter does
+
+#### Scenario: A near-but-not-exact match is rejected, not adapted
+- **WHEN** a workflow-writer binds a callback-shaped parameter to a target function whose native schema differs from the declared `callbacks` contract, even in a way that could be trivially reshaped
+- **THEN** the system SHALL reject the workflow-spec, and SHALL NOT apply any transform or adapter to reconcile the mismatch
+
 ### Requirement: MCP is one transport realization of the nesting model, not a separate mechanism
 Where a nesting service declares `via: mcp`, the system SHALL translate its declared/allowlisted target functions into MCP tool definitions dynamically, scoped to that specific invocation's allowlist, and SHALL route every resulting tool call through the same dispatch, secret-resolution, and governor-enforcement path used for any other nested call.
 
