@@ -1,0 +1,19 @@
+# Valid: sessionState declared once per key (design.md D8a, ~lines 597-604).
+# A minimal complete WorkflowSpec wrapping the sessionState example.
+irVersion: 1
+name: session-state-example
+description: Declares one session key with interactivity + a static fallback.
+sessionState:
+  sandbox_dump:
+    interactivity: interactive
+    fallback:
+      from: static
+      ref: "urn:workflow-platform:dataset:team-analytics/northwind:v2"
+steps:
+  - id: loadDump
+    service: "registry.internal/loader@sha256:9f2c8e1a0000000000000000000000000000000000000000000000000000abcd"
+    function: load
+    reads:
+      seed: { from: session, key: sandbox_dump }
+outputs:
+  loaded: { from: step, id: loadDump, output: result }

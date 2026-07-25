@@ -1,0 +1,35 @@
+# Valid: exercises the literal binding kind (design.md D8c, ~line 705, incl. the
+# D9c allowedTools literal shape) and a single-step branch case with yields
+# omitted (D8c ~line 737: yields defaults to that step's whole output object).
+irVersion: 2
+name: literal-and-single-step-branch-example
+steps:
+  - id: agentRun
+    service: "registry.internal/agent-runner@sha256:beef000000000000000000000000000000000000000000000000000000000001"
+    function: run
+    reads:
+      allowedTools:
+        literal:
+          - service: "registry.internal/enrich@sha256:cafe000000000000000000000000000000000000000000000000000000000001"
+            function: enrich
+      maxDepth: { literal: 3 }
+  - id: gate
+    kind: branch
+    selector:
+      compute: { "==": [{ var: "ok" }, true] }
+      using:
+        ok: { from: step, id: agentRun, output: succeeded }
+    cases:
+      # Single-step case: yields omitted, defaults to the step's whole output.
+      "true":
+        steps:
+          - id: acceptStep
+            service: "registry.internal/accept@sha256:d00d000000000000000000000000000000000000000000000000000000000001"
+            function: accept
+      "false":
+        steps:
+          - id: rejectStep
+            service: "registry.internal/reject@sha256:d00d000000000000000000000000000000000000000000000000000000000002"
+            function: reject
+outputs:
+  outcome: { from: step, id: gate, output: result }

@@ -1,0 +1,1231 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "SQL Assessment Service API",
+    "version": "1.0.0",
+    "description": "REST API for SQL exercise generation, student query grading, and natural-language description of SQL queries in an educational context.",
+    "contact": {
+      "name": "ALADIN Project"
+    }
+  },
+  "tags": [
+    {
+      "name": "Database",
+      "description": "Register and analyze PostgreSQL databases"
+    },
+    {
+      "name": "Generation",
+      "description": "Generate SQL tasks and descriptions"
+    },
+    {
+      "name": "Description",
+      "description": "Generate natural-language descriptions of SQL queries"
+    },
+    {
+      "name": "Grading",
+      "description": "Grade and compare student SQL queries"
+    },
+    {
+      "name": "Query",
+      "description": "Execute raw SQL queries"
+    }
+  ],
+  "paths": {
+    "/api/database/analyze-database": {
+      "post": {
+        "summary": "Analyze and register a PostgreSQL database",
+        "description": "Connects to a PostgreSQL database, extracts its full schema metadata (tables, columns, FK relationships, cardinalities), and stores it in the in-memory registry under a generated database key derived from host, port, and schema. The key is required by all subsequent endpoints.\n",
+        "tags": [
+          "Database"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeDatabaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Database successfully analyzed and registered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid connection info or connection failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Schema extraction failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/description/template": {
+      "post": {
+        "summary": "Generate a template-based SQL description",
+        "description": "Produces a deterministic, AST-driven natural-language description of the supplied SQL query using a hand-crafted template engine. No LLM or external API call is made.\n",
+        "tags": [
+          "Description"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DescriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Description generated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescriptionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, unregistered database, or SQL parse failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Template engine failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/description/llm/default": {
+      "post": {
+        "summary": "Generate an LLM description (default, temperature 0)",
+        "description": "Uses a single-shot LLM call at temperature 0 to produce a natural-language description of the SQL query. Requires OPENAI_API_KEY to be set; falls back to the template engine otherwise.\n",
+        "tags": [
+          "Description"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DescriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Description generated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescriptionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or unregistered database.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "LLM call failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/description/llm/creative": {
+      "post": {
+        "summary": "Generate a creative LLM description (temperature 0.7)",
+        "description": "Uses a single-shot LLM call at temperature 0.7 to produce a more expressive natural-language description of the SQL query.\n",
+        "tags": [
+          "Description"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DescriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Description generated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescriptionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or unregistered database.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "LLM call failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/description/llm/multi-step": {
+      "post": {
+        "summary": "Generate a multi-step LLM description",
+        "description": "Runs a three-stage chained LLM pipeline to progressively build a high-quality natural-language description of the SQL query.\n",
+        "tags": [
+          "Description"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DescriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Description generated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescriptionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or unregistered database.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "LLM pipeline failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/description/hybrid": {
+      "post": {
+        "summary": "Generate a hybrid template + LLM description",
+        "description": "Feeds the deterministic template engine output as context into an LLM for natural-language post-processing, combining the reliability of templates with the fluency of an LLM.\n",
+        "tags": [
+          "Description"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DescriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Description generated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescriptionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, unregistered database, or SQL parse failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Hybrid generation failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/generation/generate": {
+      "get": {
+        "summary": "Generate a random SQL task",
+        "description": "Generates a random SQL SELECT query based on the supplied task configuration (join depth, aggregation, predicates, etc.) and produces up to five natural-language descriptions of the task using different generation strategies (template, LLM entity-relationship, LLM schema-based, LLM creative, hybrid). The database must have been previously registered via POST /api/database/analyze-database.\n",
+        "tags": [
+          "Generation"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateTaskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Task generated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid connection info, unregistered database, or invalid task configuration.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Query or description generation failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/grading/grade": {
+      "post": {
+        "summary": "Full orchestrated grading of a student SQL query",
+        "description": "Executes both the reference and student queries, compares their result sets, AST structure, and execution plans, calculates a grade, and optionally generates a natural-language description of the student query. Accepts either a single `referenceQuery` (deprecated) or a `referenceQueries` array; when multiple references are supplied the structurally closest one is selected automatically.\n",
+        "tags": [
+          "Grading"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GradeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Grading completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, unregistered database, or connection failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Grading pipeline failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/grading/compare/result-set": {
+      "post": {
+        "summary": "Compare result sets of two SQL queries",
+        "description": "Executes both the reference and student queries against the registered database and compares their returned rows. Useful as a lightweight correctness check without full grading overhead.\n",
+        "tags": [
+          "Grading"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComparisonRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Result-set comparison completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultSetComparisonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or connection failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Comparison failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/grading/compare/ast": {
+      "post": {
+        "summary": "Compare AST structures of two SQL queries",
+        "description": "Parses both the reference and student queries and compares their abstract syntax trees at the structural level (SELECT columns, alias resolution, unsupported structure detection). No database execution is required.\n",
+        "tags": [
+          "Grading"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComparisonRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "AST comparison completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ASTComparisonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or parse failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Comparison failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/grading/compare/execution-plan": {
+      "post": {
+        "summary": "Compare query execution plans",
+        "description": "Runs EXPLAIN (FORMAT JSON) for both queries and diffs the resulting plans element by element (WHERE, GROUP BY, ORDER BY, JOIN). Returns per-element feedback and a penalty point total.\n",
+        "tags": [
+          "Grading"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComparisonRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Execution-plan comparison completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionPlanComparisonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or parse failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Comparison failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/query/execute": {
+      "post": {
+        "summary": "Execute a raw SQL SELECT query",
+        "description": "Executes a raw SQL SELECT statement against a pre-registered database. Only SELECT statements are permitted; all other statement types are rejected with a 400 error. The database must have been previously registered via POST /api/database/analyze-database.\n",
+        "tags": [
+          "Query"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryExecuteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Query executed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryExecutionResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body, unregistered database, non-SELECT statement, or connection failure.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database-level execution failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Human-readable error description (localised).",
+            "example": "Unable to connect to the database."
+          },
+          "code": {
+            "type": "string",
+            "description": "Optional machine-readable error code.",
+            "example": "NON_SELECT"
+          }
+        }
+      },
+      "MessageResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "Database successfully analyzed."
+          }
+        }
+      },
+      "PostgresConnectionInfo": {
+        "type": "object",
+        "required": [
+          "type",
+          "host",
+          "port",
+          "username",
+          "password",
+          "database",
+          "schema"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "postgres"
+            ],
+            "example": "postgres"
+          },
+          "host": {
+            "type": "string",
+            "example": "localhost"
+          },
+          "port": {
+            "type": "number",
+            "example": 5432
+          },
+          "username": {
+            "type": "string",
+            "example": "myuser"
+          },
+          "password": {
+            "type": "string",
+            "example": "mypassword"
+          },
+          "database": {
+            "type": "string",
+            "example": "mydb"
+          },
+          "schema": {
+            "type": "string",
+            "example": "public"
+          }
+        }
+      },
+      "PGliteConnectionInfo": {
+        "type": "object",
+        "description": "Connection info for an in-process PGlite database. The instance is registered out-of-band (via /analyze-database or a configured init-SQL file) and referenced afterwards by databaseId.\n",
+        "required": [
+          "type",
+          "databaseId"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "pglite"
+            ],
+            "example": "pglite"
+          },
+          "databaseId": {
+            "type": "string",
+            "description": "Stable identifier of a registered PGlite instance.",
+            "example": "my-database"
+          },
+          "sqlContent": {
+            "type": "string",
+            "description": "SQL used to (re-)initialise the instance. Required by /analyze-database; optional on downstream calls, which reuse the already-registered instance.\n"
+          }
+        }
+      },
+      "ConnectionInfo": {
+        "description": "Backend-agnostic connection info. Discriminated on the `type` field: `postgres` selects PostgresConnectionInfo, `pglite` selects PGliteConnectionInfo.\n",
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PostgresConnectionInfo"
+          },
+          {
+            "$ref": "#/components/schemas/PGliteConnectionInfo"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "postgres": "#/components/schemas/PostgresConnectionInfo",
+            "pglite": "#/components/schemas/PGliteConnectionInfo"
+          }
+        }
+      },
+      "AliasMap": {
+        "type": "object",
+        "description": "Optional human-readable display names for tables and columns. Supplied at database analysis time; used in generated descriptions.\n",
+        "properties": {
+          "tables": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "example": {
+              "orders": "Customer Orders"
+            }
+          },
+          "columns": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "example": {
+              "orders": {
+                "order_date": "Order Date"
+              }
+            }
+          }
+        }
+      },
+      "AnalyzeDatabaseRequest": {
+        "type": "object",
+        "required": [
+          "connectionInfo"
+        ],
+        "properties": {
+          "connectionInfo": {
+            "$ref": "#/components/schemas/ConnectionInfo"
+          },
+          "aliasMap": {
+            "$ref": "#/components/schemas/AliasMap"
+          },
+          "languageCode": {
+            "type": "string",
+            "description": "BCP 47 language code for error messages. Defaults to \"en\".",
+            "example": "en"
+          }
+        }
+      },
+      "TaskConfiguration": {
+        "type": "object",
+        "required": [
+          "aggregation",
+          "orderby",
+          "joinDepth",
+          "joinTypes",
+          "predicateCount",
+          "groupby",
+          "having",
+          "columnCount",
+          "operationTypes"
+        ],
+        "properties": {
+          "aggregation": {
+            "type": "boolean",
+            "description": "Whether to include aggregate functions (COUNT, SUM, …)."
+          },
+          "orderby": {
+            "type": "boolean",
+            "description": "Whether to include an ORDER BY clause."
+          },
+          "joinDepth": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of JOIN operations to include."
+          },
+          "joinTypes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "INNER JOIN",
+                "LEFT JOIN",
+                "RIGHT JOIN",
+                "FULL JOIN",
+                "CROSS JOIN",
+                "SELF JOIN"
+              ]
+            }
+          },
+          "predicateCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of WHERE predicates to generate."
+          },
+          "groupby": {
+            "type": "boolean",
+            "description": "Whether to include a GROUP BY clause."
+          },
+          "having": {
+            "type": "boolean",
+            "description": "Whether to include a HAVING clause (requires groupby=true)."
+          },
+          "columnCount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Number of columns to select."
+          },
+          "operationTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Predicate operation types to use (e.g. \"=\", \">\", \"LIKE\")."
+          }
+        }
+      },
+      "GenerateTaskRequest": {
+        "type": "object",
+        "required": [
+          "connectionInfo",
+          "taskConfiguration"
+        ],
+        "properties": {
+          "connectionInfo": {
+            "$ref": "#/components/schemas/ConnectionInfo"
+          },
+          "taskConfiguration": {
+            "$ref": "#/components/schemas/TaskConfiguration"
+          },
+          "languageCode": {
+            "type": "string",
+            "example": "en"
+          }
+        }
+      },
+      "TaskResponse": {
+        "type": "object",
+        "required": [
+          "query",
+          "templateBasedDescription",
+          "gptEntityRelationshipDescription",
+          "gptSchemaBasedDescription",
+          "hybridDescription"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The generated SQL SELECT query.",
+            "example": "SELECT name FROM customers WHERE age > 30"
+          },
+          "templateBasedDescription": {
+            "type": "string",
+            "description": "AST-template-generated natural-language description."
+          },
+          "gptEntityRelationshipDescription": {
+            "type": "string",
+            "description": "LLM-generated description using entity-relationship context (multi-step)."
+          },
+          "gptSchemaBasedDescription": {
+            "type": "string",
+            "description": "LLM-generated description using the raw schema (default GPT option)."
+          },
+          "hybridDescription": {
+            "type": "string",
+            "description": "Hybrid (template + LLM) natural-language description."
+          },
+          "gptCreativeDescription": {
+            "type": "string",
+            "description": "LLM-generated creative description (temperature 0.7). May be absent."
+          }
+        }
+      },
+      "DescriptionRequest": {
+        "type": "object",
+        "required": [
+          "connectionInfo",
+          "query"
+        ],
+        "properties": {
+          "connectionInfo": {
+            "$ref": "#/components/schemas/ConnectionInfo"
+          },
+          "query": {
+            "type": "string",
+            "description": "Raw SQL query string to describe.",
+            "example": "SELECT name FROM customers WHERE age > 30"
+          },
+          "isSelfJoin": {
+            "type": "boolean",
+            "description": "Whether the query involves a self-join. Defaults to false."
+          },
+          "languageCode": {
+            "type": "string",
+            "description": "BCP 47 language code for the generated description. Defaults to \"en\".",
+            "example": "en"
+          }
+        }
+      },
+      "DescriptionResponse": {
+        "type": "object",
+        "required": [
+          "description",
+          "languageCode"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Natural-language description of the SQL query.",
+            "example": "Retrieve the names of all customers older than 30."
+          },
+          "languageCode": {
+            "type": "string",
+            "description": "The language code of the returned description.",
+            "example": "en"
+          }
+        }
+      },
+      "ReferenceQuery": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The SQL string of the reference (model) solution.",
+            "example": "SELECT name FROM customers WHERE age > 30"
+          },
+          "stats": {
+            "type": "object",
+            "description": "Optional prior-cohort statistics for this reference query.",
+            "properties": {
+              "timesFoundByStudents": {
+                "type": "integer"
+              },
+              "averageAttemptsToFind": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "GradeRequest": {
+        "type": "object",
+        "required": [
+          "connectionInfo",
+          "gradingRequest"
+        ],
+        "properties": {
+          "connectionInfo": {
+            "$ref": "#/components/schemas/ConnectionInfo"
+          },
+          "gradingRequest": {
+            "type": "object",
+            "required": [
+              "studentQuery"
+            ],
+            "properties": {
+              "referenceQuery": {
+                "type": "string",
+                "deprecated": true,
+                "description": "Single reference query string. Deprecated — prefer referenceQueries.\n"
+              },
+              "referenceQueries": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReferenceQuery"
+                },
+                "description": "One or more reference solutions. The closest one is selected automatically.\n"
+              },
+              "studentQuery": {
+                "type": "string",
+                "description": "The student SQL query to grade."
+              }
+            }
+          },
+          "languageCode": {
+            "type": "string",
+            "example": "en"
+          },
+          "generationStrategy": {
+            "type": "string",
+            "enum": [
+              "template",
+              "llm",
+              "hybrid"
+            ],
+            "description": "Which description generation strategy to use when the student query is not equivalent. Defaults to hybrid / llm depending on query type support.\n"
+          },
+          "gptOption": {
+            "type": "string",
+            "enum": [
+              "default",
+              "creative",
+              "multi-step"
+            ],
+            "description": "GPT option when generationStrategy is llm. Defaults to default."
+          }
+        }
+      },
+      "GradeResponse": {
+        "type": "object",
+        "required": [
+          "comparisonResult"
+        ],
+        "properties": {
+          "comparisonResult": {
+            "type": "object",
+            "properties": {
+              "grade": {
+                "type": "number",
+                "description": "Numeric grade awarded (0–100).",
+                "example": 75
+              },
+              "equivalent": {
+                "type": "boolean",
+                "description": "Whether the student query is semantically equivalent to the reference."
+              },
+              "supportedQueryType": {
+                "type": "boolean",
+                "description": "Whether the query type is supported for structural comparison."
+              },
+              "feedbackDetails": {
+                "type": "object",
+                "description": "Detailed per-dimension feedback assembled by the feedback assembler."
+              }
+            }
+          }
+        }
+      },
+      "ComparisonRequest": {
+        "type": "object",
+        "required": [
+          "connectionInfo",
+          "studentQuery"
+        ],
+        "properties": {
+          "connectionInfo": {
+            "$ref": "#/components/schemas/ConnectionInfo"
+          },
+          "referenceQuery": {
+            "type": "string",
+            "deprecated": true,
+            "description": "Single reference query. Deprecated — prefer referenceQueries."
+          },
+          "referenceQueries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReferenceQuery"
+            }
+          },
+          "studentQuery": {
+            "type": "string"
+          },
+          "languageCode": {
+            "type": "string",
+            "example": "en"
+          }
+        }
+      },
+      "ResultSetComparisonResponse": {
+        "type": "object",
+        "required": [
+          "match"
+        ],
+        "properties": {
+          "match": {
+            "type": "boolean",
+            "description": "Whether both queries return identical result sets."
+          },
+          "feedback": {
+            "type": "object",
+            "description": "Optional verdict feedback when the result sets differ."
+          }
+        }
+      },
+      "ASTComparisonResponse": {
+        "type": "object",
+        "required": [
+          "columnsMatch",
+          "supported"
+        ],
+        "properties": {
+          "columnsMatch": {
+            "type": "boolean",
+            "description": "Whether the SELECT column lists of both queries match."
+          },
+          "supported": {
+            "type": "boolean",
+            "description": "Whether the query uses a supported structure. When false, only result-set equivalence is meaningful for grading.\n"
+          },
+          "feedback": {
+            "type": "object",
+            "description": "Per-element AST feedback."
+          }
+        }
+      },
+      "ExecutionPlanComparisonResponse": {
+        "type": "object",
+        "required": [
+          "plansMatch",
+          "penaltyPoints"
+        ],
+        "properties": {
+          "plansMatch": {
+            "type": "boolean",
+            "description": "Whether all compared plan elements (WHERE, GROUP BY, ORDER BY, JOIN) match.\n"
+          },
+          "feedback": {
+            "type": "object",
+            "description": "Per-element execution-plan feedback."
+          },
+          "penaltyPoints": {
+            "type": "number",
+            "description": "Grade points deducted based on plan differences."
+          }
+        }
+      },
+      "QueryExecuteRequest": {
+        "type": "object",
+        "required": [
+          "connectionInfo",
+          "query"
+        ],
+        "properties": {
+          "connectionInfo": {
+            "$ref": "#/components/schemas/ConnectionInfo"
+          },
+          "query": {
+            "type": "string",
+            "description": "Raw SQL SELECT query to execute.",
+            "example": "SELECT * FROM customers LIMIT 10"
+          },
+          "languageCode": {
+            "type": "string",
+            "example": "en"
+          }
+        }
+      },
+      "QueryExecutionResult": {
+        "type": "object",
+        "required": [
+          "rows",
+          "rowCount"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "description": "Rows returned by the query."
+          },
+          "rowCount": {
+            "type": "integer",
+            "description": "Number of rows returned.",
+            "example": 42
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+# Valid: map/forEach construct with a multi-step body and required yields
+# (design.md D8c, ~lines 715-734). Uses the { from: item } binding.
+irVersion: 1
+name: map-foreach-example
+steps:
+  - id: runQuery
+    service: "registry.internal/sql-exec@sha256:9f2c8e1a0000000000000000000000000000000000000000000000000000abcd"
+    function: query
+    reads:
+      sql: { from: request, param: query }
+  - id: enrichEach
+    kind: map
+    source: { from: step, id: runQuery, output: rows }
+    body:
+      - id: fetchDetails
+        service: "registry.internal/lookup-svc@sha256:aaa0000000000000000000000000000000000000000000000000000000000001"
+        function: lookupDetails
+        reads:
+          key: { from: item }
+      - id: enrichOne
+        service: "registry.internal/enrichment-svc@sha256:abc0000000000000000000000000000000000000000000000000000000000001"
+        function: enrich
+        reads:
+          record: { from: item }
+          details: { from: step, id: fetchDetails, output: details }
+    yields:
+      enrichedRecord: { from: step, id: enrichOne, output: enrichedRecord }
+      wasFlagged: { from: step, id: enrichOne, output: flagged }
+outputs:
+  enriched: { from: step, id: enrichEach, output: enrichedRecord }

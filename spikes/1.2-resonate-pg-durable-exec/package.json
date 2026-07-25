@@ -4,9 +4,11 @@
   "type": "module",
   "scripts": {
     "seed": "node src/seed.js",
-    "test:happy": "node src/test-happy-path.js",
-    "test:contention": "node src/test-contention.js",
-    "test:crash": "node src/test-crash.js"
+    "test:happy": "bash ../../scripts/with-postgres.sh --name spike-1-2-test-pg --port 55432 --db spike --password spike --schema schema.sql -- sh -c \"node src/seed.js 15 session-A && node src/test-happy-path.js\"",
+    "test:contention": "bash ../../scripts/with-postgres.sh --name spike-1-2-test-pg --port 55432 --db spike --password spike --schema schema.sql -- node src/test-contention.js",
+    "test:crash": "bash ../../scripts/with-postgres.sh --name spike-1-2-test-pg --port 55432 --db spike --password spike --schema schema.sql -- node src/test-crash.js",
+    "test:load": "bash ../../scripts/with-postgres.sh --name spike-1-2-test-pg --port 55432 --db spike --password spike --schema schema.sql -- node src/test-load.js",
+    "test": "node run-all-tests.js"
   },
   "dependencies": {
     "pg": "^8.11.3"

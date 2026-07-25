@@ -1,0 +1,11 @@
+{
+  "name": "spike-1-5-ir-interpreter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bash ../../scripts/with-postgres.sh --name spike-1-5-test-pg --port 55555 --db ir --password ir --schema schema.sql -- node src/test-interpreter.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}

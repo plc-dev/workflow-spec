@@ -131,7 +131,7 @@ Change-detection is delegated to the service: a service call reports whether it 
 
 **Rationale**: Keeps the DSL declarative and free of infrastructure concerns; keeps K8s/KEDA in their comfort zone (stateless, freely-scheduled workers) by making stickiness opportunistic rather than required.
 
-**Note**: this decision establishes *that* placement is fused from three sources and *that* affinity is optional, but deliberately does not specify the concrete mechanism that turns a placement decision into an actually-routed call to a specific service replica (e.g. a dedicated placement-resolver/router component, or a native addressable-entity primitive if the selected engine provides one - see D6 R11). That mechanism is an open follow-up, not yet designed.
+**Note**: this decision establishes *that* placement is fused from three sources and *that* affinity is optional, but deliberately does not specify the concrete mechanism that turns a placement decision into an actually-routed call to a specific service replica. **Update (task 1.10): this mechanism is now formalized.** The bespoke-resolver option (`placement-resolver/`) implements D4a's cache-admission model concretely - `resolvePlacement`/`recordAccess`/`evaluatePromotion`/`evaluateDemotion`/`evictLRUIfOverCapacity` against a Postgres schema whose thresholds are tunable data (`placement_config`), not hardcoded constants - verified against a real Postgres instance (batch-never-promotes, promotion/demotion hysteresis, and pinned-only LRU eviction all hold). See `placement-resolver/FINDINGS.md` for the full design.
 
 **D4a: Auto-promotion thresholds - a cache-admission model, not fixed constants.** Adaptive residency promotion (unpinned -> pinned) is decided by a model analogous to standard cache-admission policies (e.g. GDSF - greedy dual-size frequency), rather than an arbitrary rule:
 
@@ -168,6 +168,8 @@ Per-service facts needed for placement (mutates?, materialization cost class, CO
 
 **Rationale**: Keeps the separation of concerns clean: "what a service can do" is owned by the service author; "what a workflow wants" is owned by the workflow-writer; "how to place it" is owned by the runtime.
 
+**First real data point (task 1.1):** the actual pinned SQL-execution service (`ghcr.io/htw-aladin/sql-assessment-service:sha-23e9468`) was confirmed, by direct measurement against the real image, to have **`cowSupport: false`** - no cross-instance caching for identical seed content, same-key re-analyze fully replaces rather than incrementally updates, and no snapshot/dump/fork/clone endpoint exists in its API at all. See `spikes/1.1-cow-snapshot-poc/FINDINGS.md`. This is this design's first concrete instance of a service actually falling on the "full-copy fallback" side of D1's classification, not merely a hypothetical case the taxonomy was built to accommodate - it should be registered accordingly (materialization-cost-class set generously, not "negligible") once 2.3's backfill task is picked up.
+
 **D5a: Capability declarations must earn scheduler trust; trust is an optimization, never a correctness default.** A false capability declaration (e.g. a service that claims non-mutating or COW-capable but isn't) breaks the isolation guarantee itself, not just performance - this is a genuine correctness stake, addressed with the same pattern already used for affinity (D4) and residency (D4a): start conservative, promote only on evidence.
 
 ```
@@ -196,7 +198,58 @@ A continuous **runtime invariant check** guards against drift after promotion (a
 
 **Rationale**: Extends the "optimization, never correctness requirement" pattern used throughout D2-D10 to trust itself - closes the gap flagged in the original Risk entry ("capability declarations are a trust boundary that should be validated... not yet designed") with a concrete mechanism.
 
-### D6: Execution engine selection - OPEN QUESTION (not yet decided)
+### D6: Execution engine selection - DECIDED: Postgres-native path (resonate-pg-shaped fork)
+
+**Decision (locked in via task 1.4): the execution engine is a Postgres-native path - forking a small, documented Postgres-durable-execution implementation (in the shape of resonate-pg / "THE PATTERN" below), not adopting resonate-pg's Supabase-specific transport, Hatchet, Temporal, Restate, Dapr, or Conductor.** This closes the OPEN QUESTION this section carried through D1-D5's design; D7 onward can now treat the engine's properties (durable history, step execution, child/tracked execution) as this specific implementation's properties rather than a generic placeholder, though the engine-agnostic language elsewhere in this document is left as-is since it remains accurate for what's downstream.
+
+**Why**: of the six candidate paths evaluated below, this is the only one with its DEEP-consolidation claim (D3's session log, D4's placement-resolver, and D6's own durability layer sharing one Postgres transaction, not just one instance) *demonstrated* rather than argued - spike 1.2's mid-transaction-crash test showed the claim survives an actual failure boundary, and spike 1.2e's load/scale check found no operational showstopper at ~75x that spike's original scale. Every other path evaluated either caps out at SHALLOW consolidation on inspection (Hatchet, confirmed via spike 1.2-hatchet: a gRPC worker/Engine split makes step-completion and any of our own writes two separate commits, in any topology) or was never a DEEP-consolidation candidate to begin with (Temporal, Restate, Dapr - Virtual Objects/Actors can only provide placement *bookkeeping*, not host the heavyweight SQL service itself, confirmed via spike 1.2a for Restate specifically) or doesn't natively address R11 at all (Conductor). The organizational-risk axis (this team owns operating a durability core in production, vs. a vendor/community owning it) was weighed and accepted as the cost of the differentiated DEEP-consolidation property, rather than resolved by further spiking - no amount of additional spiking converts that judgment call into a technical answer, per D6's own framing throughout this section.
+
+**What this decision does NOT yet settle** (tracked as their own tasks, not blocked on re-opening this decision): 1.9 (service-nesting mechanism cost, coupled to this choice), and 1.6 (secrets-broker product - independent of the engine choice per D7's broker-agnostic model). 1.10 (placement-resolver) and 1.5 (generic IR interpreter) are now both done - see `placement-resolver/FINDINGS.md` and `spikes/1.5-ir-interpreter/FINDINGS.md` respectively.
+
+**D6a: The concrete fork target - DECIDED: clean-room, informed by resonate-pg and hatchet-dev's tutorial as design references, not as fork targets.**
+
+Three options were weighed: forking `resonatehq/resonate-pg`'s own SQL file directly; forking/porting `hatchet-dev/durable-execution-the-hard-way`'s Go lessons; or continuing the clean-room implementation spike 1.2 already built (schema.sql + worker.js, ~210 lines total, already crash/contention/load-tested).
+
+```
+resonate-pg: feature-complete (durable sleep, human-in-the-loop pauses,
+  a working agent-loop example) but immature (5 stars, 0 forks, created
+  2026-07-04 - three weeks old) and structurally mismatched: its actual
+  dispatch is a promise/task RPC protocol pushed via pg_net HTTP, not the
+  SELECT...FOR UPDATE SKIP LOCKED polling pattern spike 1.2 validated. Its
+  only maintained transport (@resonatehq/supabase) is Supabase/Deno-
+  specific; no Go transport exists (open issue), and no confirmed plain-
+  Postgres transport for our own Node.js stack either - adopting it outside
+  Supabase means writing a new Network implementation, real integration
+  work, not free adoption. Its own README admits incompleteness (list/
+  search protocol calls not yet implemented).
+
+hatchet-dev/durable-execution-the-hard-way: credible pedigree (the Hatchet
+  team), MIT-licensed, 165 stars, frozen (no upstream-drift risk). But
+  explicitly not meant to be adopted as-is - its own README states it
+  "won't implement the typical niceties you'd see in a client SDK," and
+  lists durable sleep, LISTEN/NOTIFY, and forking/branching under "ideas
+  for future lessons," i.e. not yet written. Go + pgx + sqlc, a different
+  stack than every spike built so far (Node.js + pg) - adopting it means
+  either a language/toolchain split for the durability core or manually
+  porting Go lessons into our own stack, which is clean-room work either
+  way, just using the tutorial as a reference rather than a fork target.
+
+clean-room (spike 1.2's schema.sql + worker.js): already built, and
+  already the only one of the three that implements our actual
+  differentiating requirement - D3's session log and D4's placement-
+  resolver sharing the SAME transaction as the durability core - since
+  neither reference implementation was designed around that consolidation
+  claim. Already crash-tested (spike 1.2), contention-tested, and load-
+  tested to ~75x its original scale (spike 1.2e). Inherits zero free
+  features (no durable sleep, no LISTEN/NOTIFY, no `waits` table) - but
+  neither upstream option would have handed us a working, adoptable
+  version of those either (resonate-pg's is Supabase-locked; hatchet-dev's
+  is unwritten), so this is not a cost unique to the clean-room choice.
+```
+
+**Decision: clean-room.** The deciding fact is that our actual requirement isn't a feature of either reference implementation - forking either would mean fighting an architecture mismatch (resonate-pg's RPC/pg_net transport) or adopting an incomplete, differently-stacked teaching tool (hatchet-dev's Go lessons) for a payoff limited to the smallest, least-risky part of THE PATTERN (the executions/checkpoints layer, already the least original ~30 lines of what we built). Both remain valuable as **design references** going forward (as they already were for D6's evaluation and for informing what a `waits`/durable-sleep table should eventually look like) - not as fork targets. Spike 1.2's existing schema/worker is the actual starting point for 6.1/6.2, not a throwaway prototype to be replaced by a fork.
+
+The requirements and evaluation this decision was made against are preserved below for context and to support revisiting this decision if a future spike or production finding surfaces a blocker.
 
 An execution engine must satisfy requirements derived from D1-D5, plus two more surfaced later while stress-testing this decision against still-open requirements elsewhere in this design:
 
@@ -314,10 +367,10 @@ Evaluation, updated to include the newly elevated candidates and the Postgres-na
 | Composability fit (D9) | Workable, SDK-adoption tax | Most natural, uniform invocation | Most natural, uniform invocation | Good | Strong, native tool-calling model | Neutral - build the same dispatch discipline either way |
 | 4-way infra consolidation | No | No | No | **No (confirmed SHALLOW via spike 1.2-hatchet)** - worker/Engine gRPC split means step-completion and any of our own placement/session-log writes are always two separate commits, not one, regardless of deployment topology | No | **Yes, DEEP (confirmed via spike 1.2)** - not just same-instance locality: a mid-transaction-crash test showed the durability core, session log, and placement-resolver commit-or-rollback together as one transaction |
 | D3 linear-per-session-mutation under concurrency/crash | N/A (not spiked) | N/A (not spiked; this is what 1.2a exists to check) | N/A (not spiked) | N/A - moot, since Hatchet caps at SHALLOW consolidation anyway | N/A (not spiked) | **Confirmed via spike 1.2** - holds under same-session concurrency, cross-session interleaving (no contamination), and two distinct crash/dead-worker failure shapes, via ordinary `FOR UPDATE` discipline, no surprises |
-| Operational weight | Heaviest | Light | Light-moderate | Light | Light-moderate | Lightest on paper; **not yet load/scale-tested** - spike 1.2 validated correctness under modest concurrency (8 workers, dozens of rows), not vacuum/bloat or connection-ceiling behavior at production-scale churn |
+| Operational weight | Heaviest | **Light to start; Moderate-to-heavy to run as a proper multi-node cluster (revised down via spike 1.2a)** - a production Restate cluster needs a distributed replicated log, Raft/etcd/S3 metadata storage, per-partition RocksDB, object-store snapshots, and (recommended) a K8s operator; closer in kind to Temporal's profile than a single-binary sounds | Light-moderate | Light | Light-moderate | **Confirmed lightest via spike 1.2e's load/scale check** - correctness and no-showstopper behavior held at ~75x spike 1.2's original scale (6,000 executions, 60 sessions, 32 workers): peak connections stayed well under `max_connections`, and UPDATE-churn dead tuples were fully reclaimable via `VACUUM` |
 | Maturity/adoption | Highest | Newer | Moderate ("SDK maturity behind" flagged) | Growing fast (YC-backed) | High (Netflix/enterprise-proven) | Newest as an adopted pattern; the underlying primitive (Postgres) is the most proven of all |
 
-**Status: this decision remains OPEN, but materially less open than before spiking.** Tracing the SQL-session scenario concretely through Restate and Dapr produced a correction worth restating: **neither makes our existing heavyweight services "become" addressable actors for free.** Restate's Virtual Object state is small, logical K/V data, not a place to host a multi-GB loaded database engine. Dapr Actors can host true in-memory affinity, but only if the service is rewritten to embed the Dapr Actor SDK - a real authoring-cost tax structurally bigger than what Temporal or Restate ask. The fairer, more conservative use of either primitive is as durable placement *bookkeeping* (an addressable entity per content-hash tracking which plain-REST pod is currently warm), leaving the heavyweight service untouched. Restate additionally gives per-key serialized access "for free," mapping directly onto D3's linear-per-session-mutation requirement. This same bookkeeping-only pattern is exactly what a one-table lookup in a Postgres-native path provides too - which is precisely why the 4-way consolidation finding above matters: it's not a *new* capability the Postgres path adds, it's the *same* placement-bookkeeping need, satisfied by infrastructure already required for other reasons.
+**Status at the time this evaluation was run (superseded by the DECIDED status above, preserved for context).** Tracing the SQL-session scenario concretely through Restate and Dapr produced a correction worth restating: **neither makes our existing heavyweight services "become" addressable actors for free.** Restate's Virtual Object state is small, logical K/V data, not a place to host a multi-GB loaded database engine. Dapr Actors can host true in-memory affinity, but only if the service is rewritten to embed the Dapr Actor SDK - a real authoring-cost tax structurally bigger than what Temporal or Restate ask. The fairer, more conservative use of either primitive is as durable placement *bookkeeping* (an addressable entity per content-hash tracking which plain-REST pod is currently warm), leaving the heavyweight service untouched. Restate additionally gives per-key serialized access "for free," mapping directly onto D3's linear-per-session-mutation requirement. This same bookkeeping-only pattern is exactly what a one-table lookup in a Postgres-native path provides too - which is precisely why the 4-way consolidation finding above matters: it's not a *new* capability the Postgres path adds, it's the *same* placement-bookkeeping need, satisfied by infrastructure already required for other reasons.
 
 **Spike results (1.2, 1.2-hatchet) - what changed vs. desk research.** Two of the six candidate paths have now been tested empirically rather than evaluated on paper alone (see `spikes/1.2-resonate-pg-durable-exec/FINDINGS.md` and `spikes/1.2-hatchet-product-fit/FINDINGS.md`):
 
@@ -394,40 +447,102 @@ DONE - HATCHET, SHALLOW PRODUCT-FIT EVALUATION: answered by architecture
   reframes it purely as a build-(resonate-pg fork)-vs-buy-(Hatchet,
   SHALLOW-only) trade. See spikes/1.2-hatchet-product-fit/FINDINGS.md.
 
-RE-SCOPED, NOW LIGHTWEIGHT (was: NARROW, TARGETED SPIKE) - Restate: the
-  one differentiated capability claim this was scoped to check - whether
-  the Postgres-native path can match Restate's "per-key serialized access
-  for free" via ordinary `SELECT ... FOR UPDATE` discipline without
-  surprises - has already been answered empirically by spike 1.2's own
-  contention test (same-session serialization + cross-session non-
-  contamination, no surprises found). A full parallel build-out against
-  Restate is no longer justified by an open technical question; downgrade
-  to the same desk-research posture given to Hatchet and Conductor: confirm
-  via Restate's own docs/architecture that no other differentiator applies
-  beyond what D6 has already found (Virtual Objects can't host the
-  heavyweight SQL service itself, only bookkeeping - already established
-  above), then close it out without further spike effort.
+DONE - RESTATE, LIGHTWEIGHT DESK-RESEARCH EVALUATION (re-scoped from:
+  NARROW, TARGETED SPIKE): the one differentiated capability claim this
+  was scoped to check - whether the Postgres-native path can match
+  Restate's "per-key serialized access for free" via ordinary
+  `SELECT ... FOR UPDATE` discipline without surprises - was answered
+  empirically by spike 1.2's own contention test before this task even
+  started (same-session serialization + cross-session non-contamination,
+  no surprises found). This evaluation checked for any OTHER
+  differentiator instead. Result: none found - Restate's Virtual Objects
+  are confirmed (via Restate's own architecture docs, not just the prior
+  round's assessment) unable to host the heavyweight SQL service itself,
+  matching D6's existing finding. The one correction worth carrying: a
+  DOWNWARD revision of Restate's "Light" operational-weight rating for
+  production topologies (see the updated evaluation table above) - a
+  production Restate cluster needs a distributed replicated log,
+  Raft/etcd/S3 metadata, per-partition RocksDB, and object-store snapshots,
+  closer in kind to Temporal's profile than "Light" suggested. This widens,
+  not narrows, the operational-weight gap in favor of the Postgres-native
+  path. See spikes/1.2a-restate-lightweight-eval/FINDINGS.md.
 
-NEW - LOAD/SCALE CHECK for the Postgres-native path: the one claim spike
-  1.2 did not test. Narrowly scoped (like 1.2a was originally) rather than
-  a production-readiness project: higher worker/execution-row counts than
-  spike 1.2 used, watching for lock contention, connection-count ceilings,
-  and vacuum/bloat under sustained UPDATE churn on `executions`. This is
-  the last open item before treating "lightest operational footprint" as
-  more than a paper claim, and should close before 1.4 locks in a
-  recommendation.
+DONE - LOAD/SCALE CHECK for the Postgres-native path (was a new item added
+  this round): the one claim spike 1.2 did not test. Narrowly scoped, not
+  a production-readiness project: ~75x spike 1.2's original scale (6,000
+  executions, 60 sessions, 32 concurrent workers), plus a dedicated
+  UPDATE-churn phase against 25 "hot" rows to test dead-tuple/bloat
+  behavior directly. Result: no showstopper found - all executions
+  processed exactly once, all session chains stayed contiguous at this
+  larger scale, peak connections (33) stayed well under Postgres's
+  `max_connections` (100), and dead tuples generated by the churn phase
+  were fully reclaimable via `VACUUM`. This closes the "lightest
+  operational footprint" claim's one remaining untested half. Scope
+  caveat: single-instance/single-machine, seconds-scale - not a full
+  production capacity-planning exercise (see the spike's own caveats
+  section for specifics). See
+  spikes/1.2-resonate-pg-durable-exec/FINDINGS-1.2e-load-scale.md.
 
-DEFERRED, NOT ACTIVELY SPIKED - Dapr: its main differentiator (a native
-  Secrets API) is a nice-to-have against an already-decided, broker-
-  agnostic D7 - not something a spike needs to validate to make progress.
-  Documented as a fallback; only spiked if 1.2 or the Restate evaluation
-  surfaces a blocker neither resolves (unchanged trigger condition; it has
-  not fired).
+DONE - LIGHT-TOUCH CONDUCTOR EVALUATION (its native MCP gateway's fit for
+  D9c and D8's IR-to-engine compilation step): substantiates, rather than
+  overturns, D6's existing "strongest R12 / lowest-effort compilation
+  target" rating for Conductor, with concrete structural evidence -
+  `SWITCH` maps closely onto `branch` (decisionCases/defaultCase plus a
+  `selectedCase` output mirroring D8c's own case-selection reporting), and
+  the single-task-name form of `FORK_JOIN_DYNAMIC` maps closely onto
+  `map`/`forEach` (same task shape, runtime-sized cardinality). Surfaces
+  three compilation-detail refinements for 5.9/5.10 to fold in if Conductor
+  is ever seriously pursued as a compile target (none are blockers or new
+  open questions): compile `map` specifically to the single-task-name fork
+  form, not Conductor's more permissive different-task-per-fork variant;
+  inline/expand forked workflow-specs rather than emit `SUB_WORKFLOW`
+  references, since Conductor's native sub-workflow primitive is a live
+  reference and design.md D13's fork model is explicitly not; and generate
+  two separate Conductor artifacts (the `inputParameters` list and a
+  companion MCP-route JSON Schema) from our own derived signature, since
+  Conductor doesn't derive either natively from workflow shape. Confirms no
+  native durable-governor-counter primitive exists for D9c/10.6 - same
+  conclusion as every other candidate evaluated, a neutral finding. See
+  spikes/1.2d-conductor-lightweight-eval/FINDINGS.md.
 
-UNCHANGED - Temporal (deprioritized baseline/fallback, per the prior
-  round's finding) and a light-touch Conductor evaluation (its native MCP
-  gateway's fit for D9c and D8's IR-to-engine compilation step) before
-  committing to any full spike of it.
+CLOSED, NOT REQUIRED (was: 1.2c, deferred pending a trigger) - Dapr: its
+  fallback/contingency status existed specifically to cover the case where
+  1.2 or the Restate evaluation (1.2a) surfaced a blocker neither resolved.
+  That trigger never fired - 1.2 confirmed DEEP consolidation with real
+  crash/contention/load tests, and 1.2a found no differentiator Dapr could
+  plausibly offer instead (both Restate and Dapr are limited to placement-
+  bookkeeping-only actors against the heavyweight SQL service, per D6's own
+  finding). With D6/D6a now DECIDED and empirically confirmed rather than
+  merely argued, there is no longer a contingency for Dapr to be a fallback
+  *for* - closing 1.2c as confirmed-not-required, not merely re-deferring
+  it again. Its one standing differentiator (a native Secrets API) remains
+  a nice-to-have against the already-decided, broker-agnostic D7, not a
+  reason to reopen this.
+
+CLOSED, NOT REQUIRED (was: 1.2b, deprioritized baseline/fallback
+  comparison) - Temporal: existed as a fallback/baseline comparison in case
+  the Postgres-native path (1.2) didn't hold up, or as a hedge while D6 was
+  still open. Neither condition applies anymore: 1.2's claims were
+  empirically confirmed (not merely argued) via real crash, contention, and
+  load testing (1.2/1.2e), and D6/D6a is now a locked-in decision, not an
+  open question needing a baseline comparison to fall back to. Building a
+  parallel Temporal-shaped engine now would cost real spike effort to
+  re-confirm a comparison this design no longer needs to make a decision -
+  closing 1.2b as confirmed-not-required.
+
+ALL SPIKES IN THIS ROUND ARE NOW CLOSED (1.2, 1.2-hatchet, 1.2a, 1.2d,
+  1.2e), AND 1.4 IS NOW DECIDED: the Postgres-native path (resonate-pg-
+  shaped fork) is locked in - see the DECIDED status at the top of this
+  section. Its DEEP-consolidation and D3-under-concurrency/crash claims are
+  confirmed (spike 1.2), its scale/operational-weight claim found no
+  showstopper (spike 1.2e), and neither remaining desk-research evaluation
+  (1.2a Restate, 1.2d Conductor) surfaced anything that overturns this - if
+  anything, 1.2a's finding widens Restate's operational-weight gap against
+  it, and 1.2d's finding is orthogonal (compilation-target ergonomics, not
+  an engine-selection factor). 1.2b (Temporal) and 1.2c (Dapr) are CLOSED as
+  confirmed-not-required (not merely re-deferred): both existed only as
+  contingencies for a blocker or an open decision that no longer exist -
+  see immediately above for the closure rationale for each.
 ```
 
 Run all of this alongside the D9 policy decision, since nesting-mechanism cost is coupled to whichever engine is chosen.
@@ -479,7 +594,7 @@ The IR is built from: a `WorkflowSpec` (metadata, `sessionState` declarations, s
 
 Two structural properties fall out of this:
 
-- **The dependency graph is inferred from data references**, not separately declared: a binding of `{ from: step, id: X, output: Y }` *is* the dependency edge. An explicit ordering declaration remains available as an escape hatch for steps that must be sequenced without a data dependency (e.g. side-effect-only ordering).
+- **The dependency graph is inferred from data references**, not separately declared: a binding of `{ from: step, id: X, output: Y }` *is* the dependency edge. An explicit ordering declaration remains available as an escape hatch for steps that must be sequenced without a data dependency (e.g. side-effect-only ordering). **Validated by spike 1.5** (`spikes/1.5-ir-interpreter/`): a generic interpreter that does nothing but walk a node's own definition for `{from:"step", id}` references - with no hardcoded knowledge of any particular workflow's shape - correctly holds a node `blocked` until every dependency it references is done, and promotes it in the same transaction as the write that satisfies the last one. This included branch/map nodes' *own* dependencies (declared at the branch/map level) while keeping their *internal* case/body step ids correctly unreachable from outside - both properties fell out of walking the same binding structure, not two separate mechanisms.
 - **Every workflow-spec has a derivable signature**: walking the IR for `request`-scoped bindings yields the caller-supplied parameter list; the presence of any `session`-scoped binding marks the workflow as session-requiring. This signature can be published through the same registry/discovery mechanism already used for service OpenAPI specs (D5) - workflows become discoverable to the frontend the same way services are discoverable to workflow-writers.
 
 Real control-flow needs (conditional branching, and iteration over a collection whose size is unknown until run time) are supported without abandoning static analyzability, by keeping the **shape** of every possibility static while allowing only **cardinality** (how many map iterations) and **path** (which branch) to be dynamic:
@@ -826,6 +941,8 @@ Deliberately simpler than Kubernetes' storage-version/served-version split: that
 ### D12: The service registry is a first-party metadata index, not an image byte store
 
 Every prior decision that touches "the registry" (D5's capability metadata, D5a's trust tiers, D9's composition declarations, `workflow-dsl`'s function/parameter validation, `execution-scheduling`'s placement inputs) has treated it as an existing, external, unspecified dependency. It has no owner and no defined schema or query contract anywhere in this change, despite being the single most-depended-on component in the whole design. This decision brings it into scope as a first-party capability, `service-registry` (see `specs/service-registry/spec.md`), rather than continuing to assume it.
+
+**Update (tasks 2.1/2.1a-c/2.2/2.5/2.8/2.10): this design is now a working implementation, not just a schema description.** See `registry/` - a Postgres-backed `service_images`/`function_capabilities` schema implementing every entry field described below, `getPlacementFacts` as a single atomic query (2.8), and the privilege split (2.10) enforced structurally (two modules with disjoint exports: `registry/src/admin.js` for `registerImage`, `registry/src/conformance.js` for `recordTrustTier` - nothing in a runtime-facing module can import the former), verified against a real Postgres instance (27/27 assertions passing, including a referential check that capability metadata's function keys actually exist in the entry's own `openapi_spec`). Conformance probing itself (2.4/2.6/2.7) and backfilling real images (2.3) remain deferred - this implements the tier *storage* and *metadata index*, not the pipeline that populates trust tiers from real service behavior.
 
 **Scope: a metadata index, not an image store.** The registry owns facts *about* a service image, keyed by that image's digest; it does not own the image bytes themselves. Each entry carries an `oci_ref` pointer into a standard OCI-compliant registry (product/deployment topology deferred, same posture as D7's secrets-broker-product deferral) - byte storage, pull auth, replication, and image GC stay out of scope for this component, exactly as D6's engine selection and D7's secrets-broker product are deferred elsewhere in this design.
 

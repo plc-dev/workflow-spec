@@ -1,0 +1,7 @@
+# INVALID: missing the required top-level 'irVersion' field.
+# D8d/D11: irVersion is a locked, required top-level field.
+name: bad-missing-irversion
+steps:
+  - id: runQuery
+    service: "registry.internal/sql-exec@sha256:9f2c8e1a0000000000000000000000000000000000000000000000000000abcd"
+    function: query

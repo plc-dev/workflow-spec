@@ -1,0 +1,12 @@
+# INVALID: request-param binding uses a dotted/nested path ("body.query").
+# D8a: a workflow's signature stays flat/named - reject dotted paths.
+# (To inspect a nested field, wrap in a compute + JSON-Logic var instead.)
+# Should fail the flatName pattern (no '.').
+irVersion: 1
+name: bad-dotted-param
+steps:
+  - id: runQuery
+    service: "registry.internal/sql-exec@sha256:9f2c8e1a0000000000000000000000000000000000000000000000000000abcd"
+    function: query
+    reads:
+      sql: { from: request, param: "body.query" }

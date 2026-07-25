@@ -1,0 +1,13 @@
+{
+  "name": "service-registry",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "First-party metadata index over service images (design.md D12/D5/D5a)",
+  "scripts": {
+    "test": "bash ../scripts/with-postgres.sh --name registry-test-pg --port 55444 --db registry --password registry --schema schema.sql -- node test.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}

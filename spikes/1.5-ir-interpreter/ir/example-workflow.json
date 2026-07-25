@@ -1,0 +1,62 @@
+{
+  "irVersion": 1,
+  "name": "order-total-with-discount",
+  "description": "Trivial hand-written workflow-spec for task 1.5: exercises request/step/item/literal/compute bindings, a two-case branch, a map/forEach, and a final step that depends on BOTH the branch's and the map's outputs - the minimum shape needed to genuinely test dependency-driven, generic interpretation rather than a single linear pipeline.",
+  "inputParameters": ["amount", "items"],
+  "nodes": [
+    {
+      "id": "discountBranch",
+      "kind": "branch",
+      "selector": {
+        "compute": { ">": [{ "var": "amount" }, 100] },
+        "using": { "amount": { "from": "request", "param": "amount" } }
+      },
+      "cases": {
+        "true": {
+          "steps": [
+            {
+              "id": "applyDiscount",
+              "function": "discount",
+              "reads": { "amount": { "from": "request", "param": "amount" } }
+            }
+          ],
+          "yields": { "discountedAmount": { "from": "step", "id": "applyDiscount", "output": "result" } }
+        },
+        "default": {
+          "steps": [
+            {
+              "id": "noDiscount",
+              "function": "identity",
+              "reads": { "value": { "from": "request", "param": "amount" } }
+            }
+          ],
+          "yields": { "discountedAmount": { "from": "step", "id": "noDiscount", "output": "result" } }
+        }
+      }
+    },
+    {
+      "id": "lineItems",
+      "kind": "map",
+      "source": { "from": "request", "param": "items" },
+      "body": [
+        {
+          "id": "computeLineTotal",
+          "function": "lineTotal",
+          "reads": { "item": { "from": "item" } }
+        }
+      ],
+      "yields": { "lineTotal": { "from": "step", "id": "computeLineTotal", "output": "result" } }
+    },
+    {
+      "id": "combineTotal",
+      "function": "sumWithDiscount",
+      "reads": {
+        "lineTotals": { "from": "step", "id": "lineItems", "output": "lineTotal" },
+        "discountedAmount": { "from": "step", "id": "discountBranch", "output": "discountedAmount" }
+      }
+    }
+  ],
+  "outputs": {
+    "grandTotal": { "from": "step", "id": "combineTotal", "output": "result" }
+  }
+}

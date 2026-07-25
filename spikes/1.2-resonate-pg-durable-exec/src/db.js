@@ -2,13 +2,14 @@ import pg from "pg";
 
 const { Pool } = pg;
 
-export function makePool() {
+export function makePool(overrides = {}) {
   return new Pool({
     host: "localhost",
     port: 55432,
     user: "postgres",
     password: "spike",
     database: "spike",
+    ...overrides,
   });
 }
 

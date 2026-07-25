@@ -1,0 +1,9 @@
+# INVALID: step 'service' uses a bare tag (":v1") instead of a digest.
+# D8c hard rule: a step's service reference is ALWAYS pinned to a digest
+# (@sha256:...), never a mutable tag. Should fail ociDigestRef pattern.
+irVersion: 1
+name: bad-bare-tag
+steps:
+  - id: runQuery
+    service: "registry.internal/sql-exec:v1"
+    function: query

@@ -1,0 +1,13 @@
+{
+  "name": "spike-1-8-map-foreach",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "seed": "node src/seed.js",
+    "test": "bash ../../scripts/with-postgres.sh --name spike-1-8-test-pg --port 55433 --db spike --password spike --schema schema.sql -- node src/test-map-foreach.js",
+    "test:map": "npm run test"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}

@@ -1,0 +1,42 @@
+# Valid: branch construct with value-keyed cases including an inline "default"
+# key (design.md D8c, ~lines 692-703). Abbreviated case steps from the design
+# example are fleshed out into complete step nodes (digest-pinned service +
+# function) so the whole document validates.
+irVersion: 1
+name: branch-example
+steps:
+  - id: runQuery
+    service: "registry.internal/sql-exec@sha256:9f2c8e1a0000000000000000000000000000000000000000000000000000abcd"
+    function: query
+    reads:
+      sql: { from: request, param: query }
+  - id: classify
+    kind: branch
+    selector:
+      compute: { ">": [{ var: "count" }, 100] }
+      using:
+        count: { from: step, id: runQuery, output: rowCount }
+    cases:
+      "true":
+        steps:
+          - id: vipPath
+            service: "registry.internal/vip@sha256:aaaa000000000000000000000000000000000000000000000000000000000001"
+            function: handle
+        yields:
+          result: { from: step, id: vipPath, output: x }
+      "false":
+        steps:
+          - id: stdPath
+            service: "registry.internal/std@sha256:aaaa000000000000000000000000000000000000000000000000000000000002"
+            function: handle
+        yields:
+          result: { from: step, id: stdPath, output: x }
+      default:
+        steps:
+          - id: fallbackPath
+            service: "registry.internal/fallback@sha256:aaaa000000000000000000000000000000000000000000000000000000000003"
+            function: handle
+        yields:
+          result: { from: step, id: fallbackPath, output: x }
+outputs:
+  classification: { from: step, id: classify, output: result }

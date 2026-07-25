@@ -174,12 +174,18 @@ measure that cross-session workers avoid lock-wait entirely (see caveats).
 
 ## How to reproduce
 
+`npm test` runs all four test scripts (happy-path, contention, crash, load)
+sequentially against ONE self-managed Postgres container lifecycle (see
+`run-all-tests.js` and the shared `../../scripts/with-postgres.sh` wrapper it
+calls) - no manual `docker run` step is required:
+
 ```bash
-docker run --rm --name spike-1-2-pg -e POSTGRES_PASSWORD=spike \
-  -e POSTGRES_DB=spike -p 55432:5432 postgres:16-bookworm &
-docker exec -i spike-1-2-pg psql -U postgres -d spike < schema.sql
 npm install
-npm run seed -- 15 session-A && npm run test:happy
-npm run test:contention
-npm run test:crash
+npm test
 ```
+
+Each individual script (`npm run test:happy`, `test:contention`,
+`test:crash`, `test:load`) is also independently self-contained - each
+starts and tears down its own container. If Docker isn't available, or the
+container never becomes ready, these fail loudly (non-zero exit) rather
+than skipping the database-dependent assertions.
