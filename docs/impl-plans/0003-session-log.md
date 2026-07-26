@@ -2,7 +2,7 @@
 
 ## Status
 
-`plan-agreed`
+`reviewed`
 
 ## Scope
 
@@ -398,8 +398,176 @@ cases already drive.
 
 ## Implementation notes
 
-_To be completed in Phase 3._
+Built exactly as planned, with two small clarifications surfaced while
+writing the tests (neither is a deviation from the plan's own shape):
+
+- **`rewindSession`'s no-op-at-current-sequence case (TC-9) returns the
+  ALREADY-locked pointer directly, without calling `setSequence`.** The
+  plan's interface sketch didn't spell out this short-circuit explicitly,
+  but it's a direct, unsurprising consequence of "rewinding to now must be
+  a safe no-op" - calling `setSequence` with the same value would still be
+  correct (an idempotent `UPDATE`), but skipping it avoids bumping
+  `updated_at` for a call that didn't actually change anything, which is
+  what TC-9 asserts.
+- **`replaySession` returns a `Promise` via a direct pass-through
+  (`return repos.sessionLog.listBySession(sessionId)`), not an
+  `async function`.** Functionally identical to `async` (both return a
+  `Promise<SessionLogEntry[]>`), just avoids an unnecessary extra
+  microtask tick for a function with no other logic - `waitFor`/
+  `signalWait` in `engine/wait.ts` are `async` only because they have
+  multiple awaited steps to sequence; this function has exactly one.
+
+All 11 planned test cases (TC-1 through TC-11) are implemented and
+passing:
+
+- TC-1: `test/core/database/schema.test.ts` (3 new tests: `session_log`/
+  `session_pointer` table listing extended in place, plus
+  `UNIQUE(session_id, sequence)`, `CHECK(current_sequence >= 0)`, and
+  `PRIMARY KEY(session_id)` constraint checks)
+- TC-2, TC-3, TC-4, TC-5, TC-6, TC-7, TC-8, TC-9, TC-10, TC-11:
+  `test/session/session-log.test.ts` (10 tests, one per test case)
+
+Plus repository-level tests not part of the original 11-case table (same
+posture as 0002's own extra `WaitsRepo` test): `SessionPointerRepo.lock`'s
+idempotent-creation and `setSequence`'s update-and-return behavior
+(`test/core/repositories/session-pointer.repository.test.ts`, 3 tests),
+and `SessionLogRepo.append`/`deleteAfter`/`listBySession` exercised
+directly (`test/core/repositories/session-log.repository.test.ts`, 4
+tests) - both added because `session/session-log.ts`'s own tests only
+exercise these repos through composition, and each repo's no-op/ordering
+behavior is simple enough to verify directly rather than only inferring
+it from the composed primitive's behavior.
+
+`npx tsc --noEmit`, `npx biome check .`, and `npx vitest run` all pass
+clean (58/58 tests across 14 files, up from 0002's 38) - verified directly
+immediately before writing this section, not assumed. One iteration was
+needed to get there: the first test run failed 4 assertions that compared
+a raw `pg.query` `BIGINT` column (returned as a JS string, per `pg`'s
+default type parsing - the same reason `ExecutionRow.id`/`WaitRow.id` are
+typed `string` in `rows.ts`) directly against a `number` literal via
+`toBe`. This was a test-code bug, not a production-code bug - the
+production repositories/mappers already convert every `BIGINT`/`BIGSERIAL`
+value via `Number(...)` before it reaches domain types (`SessionLogEntry`/
+`SessionPointer` are correctly typed `number` throughout); only the raw
+verification queries in `test/session/session-log.test.ts` needed
+`Number(...)` added at the assertion site. Fixed and re-verified.
+
+`biome.json`'s `noRestrictedImports` list was extended with the 7 new
+non-barrel files this package adds (`core/domain/session-log-entry.ts`,
+`core/domain/session-pointer.ts`, `core/repositories/session-log
+.repository.ts`, `core/repositories/session-pointer.repository.ts`, both
+new `repositories/queries/*.ts` files, and `session/session-log.ts`), at
+both relative-depth variants already used elsewhere in the codebase
+(ADR-0012 §4's documented, hand-maintained limitation of this lint rule).
+
+No env vars were added or changed - `.example.env` needed no update
+(verified by inspection, not just by absence of a diff).
+
+No follow-up tasks spun off. `session/`'s snapshot-chain slice (3.2-3.9)
+and the checkpoint-interval retention knob (3.11) remain deliberately
+unbuilt, exactly as scoped - the first real consumer of `replaySession`
+will be whichever future package builds 3.7 (snapshot rebuild-from-history).
+
+**Post-review fixes** (from the local code review pass immediately after
+this section was first written - all within this package's own scope, no
+plan/test-design change; each is also covered by a new/strengthened
+regression test, not just fixed in place, mirroring 0002's own posture):
+
+- **`replaySession` returned rows past the pointer.** The original
+  `replaySession` delegated straight to `SessionLogRepo.listBySession`,
+  which has no pointer bound at all - so calling it after a
+  `rewindSession` but before the next `appendEntry` (a state TC-6 itself
+  proves exists: the abandoned tail still physically exists until the
+  next append deletes it) returned the abandoned tail too, contradicting
+  this doc's own stated invariant ("nothing beyond `current_sequence` is
+  ever returned," "`history.length === pointer.currentSequence`"). Fixed
+  by adding `SessionLogRepo.listLive` (`SQL_FIND_LIVE_SESSION_LOG_ENTRIES`
+  - a single-statement query bounding `sequence` by a `session_pointer`
+  subquery, one round trip, no separate pointer-existence check needed)
+  and pointing `replaySession` at it instead of `listBySession` (which
+  itself keeps its original all-rows behavior, since the repository-level
+  tests rely on it to inspect the table's raw state including an
+  abandoned tail). Regression test: `test/session/session-log.test.ts` -
+  "replaySession excludes the abandoned tail immediately after a rewind,
+  before any new append."
+- **Redundant index.** `session_log_session_idx` duplicated the index
+  `UNIQUE (session_id, sequence)` already creates on the same columns in
+  the same order - pure write/storage overhead with no query it could
+  serve that the constraint's own index doesn't already. Removed; a
+  comment on the `UNIQUE` constraint now says why no separate index is
+  needed (mirrors `checkpoints`' own posture, which never had one). No
+  dedicated new test - this is a schema-definition removal with no
+  behavior change; every existing test that depends on `session_log`
+  being queryable/orderable by `(session_id, sequence)` still passes
+  unchanged.
+- **`SessionPointerRepo.lock` cost two round trips for one row lock.**
+  The original `SQL_ENSURE_SESSION_POINTER` (`INSERT ... ON CONFLICT DO
+  NOTHING`) then `SQL_LOCK_SESSION_POINTER` (`SELECT ... FOR UPDATE`)
+  pair meant every `appendEntry`/`rewindSession` call held the
+  per-session lock across one more round trip than necessary. Fixed by
+  collapsing both into one statement, `SQL_LOCK_OR_CREATE_SESSION_POINTER`
+  (`INSERT ... ON CONFLICT (session_id) DO UPDATE SET session_id =
+  session_pointer.session_id RETURNING *`) - the `DO UPDATE` branch locks
+  and returns the existing row in the same statement that would have
+  created it if missing. No new test needed - this is a query-shape
+  change with no observable behavior difference; every existing test
+  exercising `lock()` (idempotent creation, serialization under
+  concurrency) still passes unchanged against the new query.
+- **TC-5's own test didn't prove non-contention.** The original test
+  ("does not contend across different sessions appending concurrently")
+  only asserted each session's own sequence ended up correct under
+  concurrent load - a property that would hold even if every session
+  serialized behind one global lock, so it never actually exercised the
+  "different sessions don't block each other" claim. Renamed to reflect
+  what it actually verifies (per-session correctness under interleaving,
+  kept as its own test - still a legitimate, separate check) and added a
+  new test that holds session A's pointer lock open in an uncommitted
+  transaction while racing session B's full `appendEntry` against a
+  2-second timeout, asserting B resolves rather than timing out.
+
+All 11 originally-planned test cases plus these fixes' tests (60 total,
+up from the 58 first reported above; 12 tests in
+`test/session/session-log.test.ts`, up from 10) pass; `tsc --noEmit` and
+`biome check .` remain clean. Re-ran all three commands immediately after
+these fixes, not assumed.
 
 ## Review notes
 
-_To be completed in Phase 4._
+Compared against the agreed plan (Phase 1) and agreed test design (Phase
+2), not a fresh read of the code in a vacuum:
+
+- Every Scope item (tasks 3.1, 3.10) is present: `session_log`/
+  `session_pointer` tables, `SessionLogEntry`/`SessionPointer` domain
+  types, `SessionLogRepo`/`SessionPointerRepo` + their `queries/` files,
+  `CoreRepos.{sessionLog,sessionPointer}`, and the new `session/` module's
+  `appendEntry`/`rewindSession`/`replaySession`.
+- All 11 agreed test cases (TC-1 through TC-11) exist and pass -
+  cross-checked against the Test design table's file/property mapping;
+  each test's own comment cites its TC number, matching 0001/0002's
+  convention.
+- A local code review pass (`/local-review-uncommitted`) found 2 real
+  issues (`replaySession` returning rows past the pointer; a redundant
+  index) plus 2 suggestions (`SessionPointerRepo.lock`'s extra round trip;
+  TC-5's own test not actually proving non-contention). All 4 were fixed,
+  each with a new or strengthened regression test (see Implementation
+  notes' "Post-review fixes").
+- Re-ran `npx tsc --noEmit`, `npx biome check .`, and `npx vitest run`
+  immediately before writing this section, after the post-review fixes:
+  clean typecheck, clean lint, 60/60 tests passing across 14 files.
+- The two resolved "deferred deletion, not eager deletion" and "blocking
+  `FOR UPDATE`, not `SKIP LOCKED`" open questions from Phase 1 are both
+  implemented exactly as recorded in the Sources section - `rewindSession`
+  never calls `SessionLogRepo.deleteAfter`; only `appendEntry` does, as
+  its first step. The post-review fixes reinforce rather than revise this:
+  `replaySession`'s fix bounds the READ side by the same pointer value the
+  WRITE side (`deleteAfter`) already used as its boundary - it does not
+  change when deletion happens.
+- No scope creep: 3.2-3.9 (snapshot chain/materialization), 3.11
+  (checkpoint interval), and any wiring into `engine/`'s dispatch loop or
+  a real `apps/worker` were not touched, consistent with the plan's
+  explicit exclusions.
+- `tasks.md` accurately reflects reality: 3.1 and 3.10 both marked `[x]`
+  with pointers to the real files/tests, not just this doc.
+
+No further follow-up issues found. Package considered complete for its
+stated scope.

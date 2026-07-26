@@ -1,20 +1,8 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "vcs": {
-    "enabled": true,
-    "clientKind": "git",
-    "useIgnoreFile": true
-  },
-  "files": {
-    "ignoreUnknown": true,
-    "ignore": ["archive/**"]
-  },
-  "formatter": {
-    "enabled": true,
-    "indentStyle": "space",
-    "indentWidth": 2,
-    "lineWidth": 100
-  },
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": { "ignoreUnknown": true, "ignore": ["archive/**"] },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
   "linter": {
     "enabled": true,
     "rules": {
@@ -67,7 +55,21 @@
               "../engine/claim-complete.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
               "../../engine/claim-complete.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
               "../engine/wait.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
-              "../../engine/wait.js": "Import this module only via its index.ts barrel (ADR-0012 SS4)."
+              "../../engine/wait.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/domain/session-log-entry.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/domain/session-log-entry.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/domain/session-pointer.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/domain/session-pointer.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/repositories/session-log.repository.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/repositories/session-log.repository.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/repositories/session-pointer.repository.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/repositories/session-pointer.repository.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/repositories/queries/session-log.queries.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/repositories/queries/session-log.queries.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/repositories/queries/session-pointer.queries.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/repositories/queries/session-pointer.queries.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../session/session-log.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../session/session-log.js": "Import this module only via its index.ts barrel (ADR-0012 SS4)."
             }
           }
         }
@@ -75,10 +77,6 @@
     }
   },
   "javascript": {
-    "formatter": {
-      "quoteStyle": "double",
-      "semicolons": "always",
-      "trailingCommas": "all"
-    }
+    "formatter": { "quoteStyle": "double", "semicolons": "always", "trailingCommas": "all" }
   }
 }

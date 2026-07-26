@@ -7,6 +7,14 @@ import {
   type ExecutionsRepo,
   createExecutionsRepo,
 } from "../repositories/executions.repository.js";
+import {
+  type SessionLogRepo,
+  createSessionLogRepo,
+} from "../repositories/session-log.repository.js";
+import {
+  type SessionPointerRepo,
+  createSessionPointerRepo,
+} from "../repositories/session-pointer.repository.js";
 import { type WaitsRepo, createWaitsRepo } from "../repositories/waits.repository.js";
 
 // ADR-0002: `core/` exposes `withTransaction(fn) -> repos`. Higher-level
@@ -15,22 +23,24 @@ import { type WaitsRepo, createWaitsRepo } from "../repositories/waits.repositor
 // their own connection or own any schema - this is the ONE place a
 // transaction is opened/committed/rolled back.
 //
-// This package builds the `executions`/`checkpoints`/`waits` members of
-// the eventual full repo set (ADR-0002's diagram also lists `sessionLog`,
-// `placement`, `datasetIndex`, `memoization`) - those are added
-// incrementally by the packages that actually need them, per
+// This package builds the `executions`/`checkpoints`/`waits`/`sessionLog`/
+// `sessionPointer` members of the eventual full repo set (ADR-0002's
+// diagram also lists `placement`, `datasetIndex`, `memoization`) - those
+// are added incrementally by the packages that actually need them, per
 // docs/impl-plans/0001-durable-core.md's "Open questions" section.
 export interface CoreRepos {
   executions: ExecutionsRepo;
   checkpoints: CheckpointsRepo;
   waits: WaitsRepo;
+  sessionLog: SessionLogRepo;
+  sessionPointer: SessionPointerRepo;
   // The raw transaction client itself, for a caller that needs to issue
   // its own query on the SAME transaction before a typed repo exists for
-  // it yet (e.g. a future session/scheduler write, or - in this package's
-  // own tests - a raw query proving the composability shape works). Typed
-  // repos above remain the preferred surface; this exists so "operate
-  // within a transaction handed to them" (ADR-0002) isn't blocked on a
-  // repo existing for every concern on day one.
+  // it yet (e.g. a future scheduler/dataset-catalog write, or - in this
+  // package's own tests - a raw query proving the composability shape
+  // works). Typed repos above remain the preferred surface; this exists
+  // so "operate within a transaction handed to them" (ADR-0002) isn't
+  // blocked on a repo existing for every concern on day one.
   client: PoolClient;
 }
 
@@ -52,6 +62,8 @@ export async function withTransaction<T>(
       executions: createExecutionsRepo(client),
       checkpoints: createCheckpointsRepo(client),
       waits: createWaitsRepo(client),
+      sessionLog: createSessionLogRepo(client),
+      sessionPointer: createSessionPointerRepo(client),
       client,
     };
     const result = await fn(repos);

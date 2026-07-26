@@ -58,7 +58,7 @@
 
 ## 3. Session & state layer
 
-- [ ] 3.1 Implement durable session input-history log (append-only, per session) - evaluate whether this can be built directly on the selected engine's own durable execution history (design.md D3 note) rather than as separate infrastructure
+- [x] 3.1 Implement durable session input-history log (append-only, per session) - evaluate whether this can be built directly on the selected engine's own durable execution history (design.md D3 note) rather than as separate infrastructure. Done: see `docs/impl-plans/0003-session-log.md` - resolved the "evaluate" clause: NO, a dedicated `session_log` table is needed (a session's arbitrary-cardinality action history outlives and doesn't map 1:1 onto any single `executions` row's lease/retry lifecycle), consistent with ADR-0002's own schema diagram. `src/core/database/schema.sql` (`session_log`/`session_pointer` tables), `src/core/domain/{session-log-entry,session-pointer}.ts`, `src/core/repositories/{session-log,session-pointer}.repository.ts` + `repositories/queries/{session-log,session-pointer}.queries.ts`, `CoreRepos.{sessionLog,sessionPointer}`, and the new `src/session/` module's `session-log.ts` (`appendEntry`/`replaySession`). Tests: `test/core/database/schema.test.ts` (extended), `test/core/repositories/{session-log,session-pointer}.repository.test.ts`, `test/session/session-log.test.ts` (60/60 tests passing across 14 files, real testcontainers-managed Postgres) - covering ordered append, lazy pointer creation, same-session-serializes/cross-session-doesn't-contend concurrency (with an actual blocking-proof test for the latter), and `replaySession` correctly excluding a rewind's not-yet-truncated abandoned tail.
 - [ ] 3.2 Implement content-addressed snapshot store (hash of base + operations -> snapshot)
 - [ ] 3.3 Implement linear snapshot chain construction per session
 - [ ] 3.4 Implement copy-on-write materialization path for COW-capable services
@@ -67,7 +67,7 @@
 - [ ] 3.7 Implement snapshot rebuild-from-history path (for GC'd snapshots)
 - [ ] 3.8 Implement (base, operation) -> output memoization cache and lookup path
 - [ ] 3.9 Wire change-detection signal from service responses into chain-advancement logic
-- [ ] 3.10 Implement session rewind (pointer movement) with truncation-on-new-mutation (design.md D3a)
+- [x] 3.10 Implement session rewind (pointer movement) with truncation-on-new-mutation (design.md D3a). Done: see `docs/impl-plans/0003-session-log.md` - `session.rewindSession` moves `session_pointer.current_sequence` backward only (no deletion at rewind time, taken literally from D3a's own wording); `session.appendEntry` deletes the abandoned forward tail as the first step of its NEXT call, then inserts reusing the freed sequence number. Tests: `test/session/session-log.test.ts` (rewind-without-deletion, truncate-then-reuse-sequence-on-next-append, out-of-range rejection, no-op-at-current-sequence, and a mid-transaction-crash test proving the truncate+insert+advance sequence rolls back as one unit).
 - [ ] 3.11 Implement configurable checkpoint interval for intermediate snapshot retention, defaulting to full-chain-for-session-lifetime (design.md D3a)
 
 ## 4. Scheduler / placement layer

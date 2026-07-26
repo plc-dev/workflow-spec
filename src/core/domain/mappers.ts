@@ -1,6 +1,14 @@
 import type { Checkpoint } from "./checkpoint.js";
 import type { Execution } from "./execution.js";
-import type { CheckpointRow, ExecutionRow, WaitRow } from "./rows.js";
+import type {
+  CheckpointRow,
+  ExecutionRow,
+  SessionLogEntryRow,
+  SessionPointerRow,
+  WaitRow,
+} from "./rows.js";
+import type { SessionLogEntry } from "./session-log-entry.js";
+import type { SessionPointer } from "./session-pointer.js";
 import type { Wait } from "./wait.js";
 
 export function mapExecutionRow(row: ExecutionRow): Execution {
@@ -35,5 +43,23 @@ export function mapWaitRow(row: WaitRow): Wait {
     wakeAt: row.wake_at,
     satisfiedAt: row.satisfied_at,
     createdAt: row.created_at,
+  };
+}
+
+export function mapSessionLogEntryRow(row: SessionLogEntryRow): SessionLogEntry {
+  return {
+    id: Number(row.id),
+    sessionId: row.session_id,
+    sequence: Number(row.sequence),
+    input: row.input,
+    createdAt: row.created_at,
+  };
+}
+
+export function mapSessionPointerRow(row: SessionPointerRow): SessionPointer {
+  return {
+    sessionId: row.session_id,
+    currentSequence: Number(row.current_sequence),
+    updatedAt: row.updated_at,
   };
 }

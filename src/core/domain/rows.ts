@@ -31,3 +31,17 @@ export interface WaitRow {
   satisfied_at: Date | null;
   created_at: Date;
 }
+
+export interface SessionLogEntryRow {
+  id: string; // BIGSERIAL comes back as a string from `pg` by default
+  session_id: string;
+  sequence: string; // BIGINT comes back as a string from `pg` by default
+  input: unknown;
+  created_at: Date;
+}
+
+export interface SessionPointerRow {
+  session_id: string;
+  current_sequence: string; // BIGINT comes back as a string from `pg` by default
+  updated_at: Date;
+}

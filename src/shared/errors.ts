@@ -15,6 +15,9 @@ export const ERROR_IDS = {
   CORE_CHECKPOINT_CONFLICT_NOT_FOUND: "core.checkpoints.conflict_not_found",
   CORE_WAIT_NO_ROW_RETURNED: "core.waits.insert_no_row_returned",
   CORE_WAIT_KEY_TOO_LONG: "core.waits.wait_key_too_long",
+  CORE_SESSION_LOG_NO_ROW_RETURNED: "core.session_log.insert_no_row_returned",
+  CORE_SESSION_POINTER_NO_ROW_RETURNED: "core.session_pointer.no_row_returned",
+  SESSION_REWIND_TARGET_OUT_OF_RANGE: "session.rewind.target_out_of_range",
 } as const;
 
 export type ErrorId = (typeof ERROR_IDS)[keyof typeof ERROR_IDS];
@@ -29,6 +32,12 @@ export const DEFAULT_ERROR_MESSAGES: Record<ErrorId, string> = {
     "A checkpoint insert conflicted with an existing row, but that row could not be found.",
   [ERROR_IDS.CORE_WAIT_NO_ROW_RETURNED]: "Inserting a wait did not return the inserted row.",
   [ERROR_IDS.CORE_WAIT_KEY_TOO_LONG]: "A wait's waitKey exceeds the maximum allowed length.",
+  [ERROR_IDS.CORE_SESSION_LOG_NO_ROW_RETURNED]:
+    "Inserting a session log entry did not return the inserted row.",
+  [ERROR_IDS.CORE_SESSION_POINTER_NO_ROW_RETURNED]:
+    "Locking or updating a session pointer did not return a row.",
+  [ERROR_IDS.SESSION_REWIND_TARGET_OUT_OF_RANGE]:
+    "A session rewind's target sequence is negative or ahead of the session's current sequence.",
 };
 
 export interface PlatformErrorOptions {

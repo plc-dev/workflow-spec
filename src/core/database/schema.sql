@@ -8,11 +8,14 @@
 -- 0002-durable-sleep.md, task 6.1b) - the remainder of THE PATTERN
 -- (design.md D6) that 0001 deliberately deferred.
 --
+-- `session_log`/`session_pointer` (design.md D3/D3a, tasks 3.1/3.10,
+-- docs/impl-plans/0003-session-log.md) are added below too - the durable
+-- session input-history log and its rewindable pointer, owned by `core/`
+-- per ADR-0002, operated over by the `session/` module (ADR-0007).
+--
 -- Deliberately NOT included here:
---   - `session_log`/`session_pointer` (D3) - belongs to a future session/
---     package, added to this same schema.sql when that package lands
 --   - `placement`/`placement_config`/`placement_access` (D4/D4a) - belongs
---     to a future scheduler/ package, likewise
+--     to a future scheduler/ package
 --
 -- Uses the default `public` schema, not a dedicated SQL schema namespace -
 -- spike 1.2's `spike` schema existed only to isolate it from other
@@ -216,3 +219,42 @@ BEGIN
     PERFORM pg_notify('execution_ready', p_wait_key);
 END;
 $$ LANGUAGE plpgsql SET search_path = public, pg_catalog;
+
+-- Session log (design.md D3, tasks 3.1/3.10): the durable source of truth
+-- for a session is its user input history, kept independent of any
+-- derived snapshot cache (D3's own diagram). `session_id` is the same
+-- opaque string `executions.session_id` already uses (minted elsewhere,
+-- per D14) - there is no platform-owned `sessions` table, so no FK from
+-- either table below to one. `sequence` is per-session, starting at 1,
+-- assigned and advanced exclusively by `session/`'s `appendEntry`
+-- (docs/impl-plans/0003-session-log.md) - never by a DEFAULT/sequence
+-- object here, since the "next" value depends on this session's own
+-- current_sequence, not a global counter.
+CREATE TABLE IF NOT EXISTS session_log (
+    id            BIGSERIAL PRIMARY KEY,
+    session_id    TEXT NOT NULL,
+    sequence      BIGINT NOT NULL,
+    input         JSONB NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Also serves every query pattern this table needs (WHERE session_id
+    -- = $1 [AND sequence ...] ORDER BY sequence ASC) via this constraint's
+    -- own index - a separate CREATE INDEX on the same columns would be
+    -- purely redundant write/storage overhead (local-review fix, docs/
+    -- impl-plans/0003-session-log.md "Post-review fixes"; mirrors
+    -- `checkpoints`' own posture of relying solely on its UNIQUE index).
+    UNIQUE (session_id, sequence)
+);
+
+-- D3a: a rewind moves `current_sequence` backward; the next `appendEntry`
+-- (not the rewind itself) deletes any `session_log` rows past this point
+-- before inserting its new entry - see session-pointer.repository.ts /
+-- session-log.repository.ts and session/session-log.ts for where each
+-- half of that sequencing actually happens. `current_sequence = 0` means
+-- "no entries appended yet"; a session has no row here until its first
+-- `appendEntry` call creates one.
+CREATE TABLE IF NOT EXISTS session_pointer (
+    session_id       TEXT PRIMARY KEY,
+    current_sequence BIGINT NOT NULL DEFAULT 0,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (current_sequence >= 0)
+);
