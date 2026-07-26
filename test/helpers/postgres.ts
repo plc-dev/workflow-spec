@@ -16,15 +16,24 @@ export interface TestPostgres {
   stop(): Promise<void>;
 }
 
+export interface StartTestPostgresOptions {
+  /** Defaults to core/'s schema.sql - pass registry/'s (or any other
+   * module's own database's) schema.sql path to stand up a SEPARATE
+   * ephemeral instance for a module with its own database (ADR-0006). */
+  schemaPath?: string;
+}
+
 // ADR-0009: every test whose behavior depends on real Postgres semantics
 // runs against a real, ephemeral, testcontainers-managed instance - not
 // mocked. One container per test file (started in `beforeAll`), schema.sql
 // applied fresh (ADR-0009's deferred-migrations decision).
-export async function startTestPostgres(): Promise<TestPostgres> {
+export async function startTestPostgres(
+  options: StartTestPostgresOptions = {},
+): Promise<TestPostgres> {
   const container = await new PostgreSqlContainer("postgres:16-alpine").start();
   const connectionString = container.getConnectionUri();
 
-  const schema = await readFile(SCHEMA_PATH, "utf8");
+  const schema = await readFile(options.schemaPath ?? SCHEMA_PATH, "utf8");
   const setupPool = new Pool({ connectionString });
   await setupPool.query(schema);
   await setupPool.end();

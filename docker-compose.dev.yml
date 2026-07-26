@@ -1,10 +1,14 @@
 # Persistent local development stack (ADR-0010). Distinct in purpose from
 # testcontainers (ADR-0009), which is test-scoped and ephemeral per test run.
 #
-# Scoped down to `postgres` only for now - `openbao` (secrets, task 1.6) and
-# `minio` (dataset bytes, D8b) have no consumer yet in this repo; add them
-# when the packages that actually need them (secrets/, dataset-catalog/)
-# land, per ADR-0010's own service list.
+# `openbao` (secrets, task 1.6) and `minio` (dataset bytes, D8b) have no
+# consumer yet in this repo; add them when the packages that actually need
+# them (secrets/, dataset-catalog/) land, per ADR-0010's own service list.
+#
+# `registry-postgres` is a SEPARATE database from `postgres` (ADR-0006 -
+# registry/ owns its own database, entirely separate from core/'s
+# consolidated schema) - a distinct port/container, not a second schema on
+# the same instance.
 services:
   postgres:
     image: postgres:16-alpine
@@ -19,5 +23,19 @@ services:
       - wfx-postgres-data:/var/lib/postgresql/data
       - ./src/core/database/schema.sql:/docker-entrypoint-initdb.d/01-core-schema.sql:ro
 
+  registry-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wfx
+      POSTGRES_PASSWORD: wfx
+      POSTGRES_DB: registry
+    ports:
+      - "5433:5432"
+    volumes:
+      - wfx-registry-postgres-data:/var/lib/postgresql/data
+      - ./src/registry/database/schema.sql:/docker-entrypoint-initdb.d/01-registry-schema.sql:ro
+
 volumes:
   wfx-postgres-data:
+  wfx-registry-postgres-data:

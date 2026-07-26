@@ -29,6 +29,10 @@ export const ERROR_IDS = {
   ENGINE_NODE_NOT_FOUND: "engine.interpreter.node_not_found",
   ENGINE_BINDING_KIND_NOT_SUPPORTED: "engine.bindings.kind_not_supported",
   ENGINE_NODE_OUTPUT_MISSING: "engine.bindings.step_output_missing",
+  REGISTRY_VALIDATION_FAILED: "registry.registration.validation_failed",
+  REGISTRY_TRUST_TIER_INVALID: "registry.trust_tier.invalid",
+  REGISTRY_TRUST_TIER_UNKNOWN_DIGEST: "registry.trust_tier.unknown_digest",
+  REGISTRY_SERVICE_IMAGE_UPSERT_NO_ROW_RETURNED: "registry.service_images.upsert_no_row_returned",
 } as const;
 
 export type ErrorId = (typeof ERROR_IDS)[keyof typeof ERROR_IDS];
@@ -69,6 +73,14 @@ export const DEFAULT_ERROR_MESSAGES: Record<ErrorId, string> = {
     "This binding kind is not yet resolvable by the plain-step interpreter (task 6.2b, not yet implemented).",
   [ERROR_IDS.ENGINE_NODE_OUTPUT_MISSING]:
     "A step binding referenced a dependency's output that has not been recorded yet.",
+  [ERROR_IDS.REGISTRY_VALIDATION_FAILED]:
+    "A registry registration payload failed schema/referential validation.",
+  [ERROR_IDS.REGISTRY_TRUST_TIER_INVALID]:
+    "The given trust tier is not one of the recognized values.",
+  [ERROR_IDS.REGISTRY_TRUST_TIER_UNKNOWN_DIGEST]:
+    "No registered image exists for the given digest - the runtime can only annotate trust on an image a developer already registered.",
+  [ERROR_IDS.REGISTRY_SERVICE_IMAGE_UPSERT_NO_ROW_RETURNED]:
+    "Upserting a service image did not return the upserted row.",
 };
 
 export interface PlatformErrorOptions {
