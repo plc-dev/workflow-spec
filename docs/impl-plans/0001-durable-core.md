@@ -330,6 +330,52 @@ testcontainers' image pull/start).
   reason Postgres documents for functions with unqualified object
   references - not a behavior change, all 16 tests still pass.
 
+**Post-review maintainability refactor** (requested after the package was
+already `reviewed`; no scope/test-design change, purely internal
+structure - applied directly rather than re-running Phase 1/2):
+
+- **`src/config.ts`** - ADR-0009's "one `src/config.ts`, a zod schema over
+  `process.env`, fails closed on anything missing or invalid, no scattered
+  `process.env.X` reads elsewhere" was decided but not yet applied; this
+  package had exactly one bare `process.env.LOG_LEVEL` read (in
+  `logger.ts`), now the single thing `config.ts` governs. `parseConfig` is
+  exported separately from the module-level `config` singleton so it's
+  testable against arbitrary env objects without module-reimport tricks.
+- **`src/errors.ts`** - ADR-0009's "one shared `src/errors.ts`: a
+  `PlatformError` base, with `RetryableError`/`FatalError` subclasses" was
+  likewise decided but not yet built. Added, with a stable `errorId`
+  (`ERROR_IDS`, e.g. `core.executions.enqueue_no_row_returned`) kept
+  separate from the human-readable default `message` - the id is what an
+  external system keys its own user-facing copy off of, not this
+  codebase's own message text. The two call sites that previously threw
+  bare `new Error("...")` (`ExecutionsRepo.enqueue`'s missing-`RETURNING`-
+  row case, `CheckpointsRepo.insert`'s conflict-row-not-found case) now
+  throw `FatalError` with a named `errorId`.
+- **SQL query constants** - every inline SQL string in `src/core/
+  repositories/{executions,checkpoints}.ts` extracted into a same-folder
+  `*.queries.ts` file, each constant named with a `SQL_` prefix (e.g.
+  `SQL_CLAIM_EXECUTION`). Scoped to `src/` (production code) only - test
+  files keep inline SQL for setup/assertions, which is idiomatic test code
+  rather than "the code" this concern is about.
+- **`src/core/constants.ts`** - `DEFAULT_LEASE_SECONDS` (30), replacing a
+  bare `30` in `ExecutionsRepo.claim`'s default parameter. Noted in the
+  constant's own comment: this can't be the SQL-side default's single
+  source of truth (`claim_execution(..., p_lease_seconds INT DEFAULT 30)`
+  in `core/schema.sql` is a different runtime) - the two must be kept in
+  sync by hand if either changes.
+- **Named log-event constants** in `engine/index.ts`
+  (`LOG_EVENT_CLAIM_EXECUTION`/`LOG_EVENT_COMPLETE_EXECUTION`) replacing
+  inline string literals at each `logger.debug(...)` call site.
+- Added `test/config.test.ts` and `test/errors.test.ts` (5 tests, no
+  testcontainers needed) covering the two new shared modules' own logic
+  (fail-closed parsing, errorId/context propagation) - not part of the
+  original TC-1..TC-8 set, added because the new modules have real branching
+  logic worth covering, consistent with this package's existing testing
+  bar.
+
+All 21 tests (16 original + 5 new) pass after this refactor; `tsc --noEmit`
+and `biome check .` both clean.
+
 All 8 planned test cases (TC-1 through TC-8) are implemented and passing:
 
 - TC-1: `test/core/schema.test.ts` (4 tests)

@@ -1,5 +1,13 @@
 import type { PoolClient } from "pg";
+import { ERROR_IDS, FatalError } from "../../errors.js";
+import { DEFAULT_LEASE_SECONDS } from "../constants.js";
 import { type Execution, type ExecutionRow, mapExecutionRow } from "../types.js";
+import {
+  SQL_CLAIM_EXECUTION,
+  SQL_ENQUEUE_EXECUTION,
+  SQL_FIND_EXECUTION_BY_ID,
+  SQL_MARK_EXECUTION_DONE,
+} from "./executions.queries.js";
 
 export interface ExecutionsRepo {
   enqueue(input: { sessionId: string; step: string; input: unknown }): Promise<Execution>;
@@ -14,22 +22,22 @@ export interface ExecutionsRepo {
 export function createExecutionsRepo(client: PoolClient): ExecutionsRepo {
   return {
     async enqueue({ sessionId, step, input }) {
-      const result = await client.query<ExecutionRow>(
-        `INSERT INTO executions (session_id, step, input)
-         VALUES ($1, $2, $3)
-         RETURNING *`,
-        [sessionId, step, JSON.stringify(input)],
-      );
+      const result = await client.query<ExecutionRow>(SQL_ENQUEUE_EXECUTION, [
+        sessionId,
+        step,
+        JSON.stringify(input),
+      ]);
       const row = result.rows[0];
-      if (!row) throw new Error("enqueue: INSERT ... RETURNING produced no row");
+      if (!row) {
+        throw new FatalError(ERROR_IDS.CORE_ENQUEUE_NO_ROW_RETURNED, {
+          context: { sessionId, step },
+        });
+      }
       return mapExecutionRow(row);
     },
 
-    async claim(workerId, leaseSeconds = 30) {
-      // THE PATTERN's dispatcher (design.md D6): no broker, no leader
-      // election - `claim_execution()` does the SELECT ... FOR UPDATE SKIP
-      // LOCKED + promote-to-running round trip in one call.
-      const result = await client.query<ExecutionRow>("SELECT * FROM claim_execution($1, $2)", [
+    async claim(workerId, leaseSeconds = DEFAULT_LEASE_SECONDS) {
+      const result = await client.query<ExecutionRow>(SQL_CLAIM_EXECUTION, [
         workerId,
         leaseSeconds,
       ]);
@@ -39,21 +47,13 @@ export function createExecutionsRepo(client: PoolClient): ExecutionsRepo {
     },
 
     async findById(id) {
-      const result = await client.query<ExecutionRow>("SELECT * FROM executions WHERE id = $1", [
-        id,
-      ]);
+      const result = await client.query<ExecutionRow>(SQL_FIND_EXECUTION_BY_ID, [id]);
       const row = result.rows[0];
       return row ? mapExecutionRow(row) : null;
     },
 
     async markDone(id) {
-      // Idempotent: setting an already-`done` row's status to `done` again
-      // is a no-op write, not an error - completeExecution relies on this
-      // to be safely callable twice for the same execution (TC-5).
-      await client.query(
-        `UPDATE executions SET status = 'done', updated_at = now() WHERE id = $1`,
-        [id],
-      );
+      await client.query(SQL_MARK_EXECUTION_DONE, [id]);
     },
   };
 }
