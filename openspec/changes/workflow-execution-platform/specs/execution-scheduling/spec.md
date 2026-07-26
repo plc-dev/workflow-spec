@@ -81,7 +81,7 @@ Where a binding is declared static and immutable, the scheduler SHALL materializ
 - **THEN** the scheduler SHALL reuse a single materialized instance across all of them rather than materializing it once per workflow instance
 
 ### Requirement: Pre-analysis of statically declared branches and map bodies
-Where a workflow-spec's IR contains a branch construct or a map/forEach construct, the scheduler SHALL be able to analyze every statically declared possibility (every branch case, and the map iteration body's shape) ahead of execution, independent of which case is later selected or how many iterations later occur at run time.
+Where a workflow-spec's execution plan contains a branch construct or a map/forEach construct, the scheduler SHALL be able to analyze every statically declared possibility (every branch case, and the map iteration body's shape) ahead of execution, independent of which case is later selected or how many iterations later occur at run time.
 
 #### Scenario: Placement implications known before a branch is taken
 - **WHEN** a workflow-spec containing a branch step is submitted for scheduling analysis

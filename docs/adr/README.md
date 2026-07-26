@@ -13,9 +13,9 @@ building." Each ADR names which conceptual decision(s) it derives from.
 
 | ADR | Title | Derives from |
 |---|---|---|
-| [0001](./0001-monorepo-and-typescript.md) | A single TypeScript package, plus a separate Go exec-agent (revised: no npm workspaces) | D8, D11 (IR as shared type contract) |
+| [0001](./0001-monorepo-and-typescript.md) | A single TypeScript package, plus a separate Go exec-agent (revised: no npm workspaces) | D8, D11 (execution plan as shared type contract) |
 | [0002](./0002-core-owns-consolidated-schema.md) | `core/` owns the consolidated transactional schema | D6 (4-way consolidation) |
-| [0003](./0003-ir-is-the-system-spine.md) | The IR is the system spine (`ir/`) | D8, D8a-d, D11 |
+| [0003](./0003-execution-plan-is-the-system-spine.md) | The execution plan is the system spine (`workflow-spec/` today; `execution-plan/` splits out with the compiler) | D8, D8a-d, D11 |
 | [0004](./0004-binding-resolution-contract.md) | Binding resolution: resolver-per-kind, handles not values | D1, D2, D6 (R3), D8, D10, D16 |
 | [0005](./0005-step-dispatch-is-cli-nesting-stays-flexible.md) | Step dispatch is CLI-only; nested calls stay transport-flexible | D9b, D9c, D17 |
 | [0006](./0006-control-plane-stores-are-separate.md) | Control-plane stores (registry, workflow-spec store) are separate from core | D12, D13 |

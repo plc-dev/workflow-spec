@@ -1,5 +1,5 @@
 {
-  "irVersion": 2,
+  "workflowSpecVersion": 2,
   "name": "literal-and-single-step-branch-example",
   "steps": [
     {

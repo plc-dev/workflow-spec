@@ -1,6 +1,6 @@
 // ADR-0012: this module's public surface - re-exports only, no logic.
 
-export { CURRENT_IR_VERSION, JSON_SCHEMA_ID } from "./constants.js";
+export { CURRENT_WORKFLOW_SPEC_VERSION, JSON_SCHEMA_ID } from "./constants.js";
 
 export type {
   Binding,
@@ -17,7 +17,7 @@ export type { Node, Step, BranchNode, MapNode, CaseBody } from "./domain/node.js
 export type { SessionStateDeclaration } from "./domain/session-state.js";
 export type { SessionWriteTarget } from "./domain/write-target.js";
 export type { SecretRef } from "./domain/secret-ref.js";
-export type { WorkflowSpec } from "./domain/workflow-spec.js";
+export type { WorkflowSpec, ExecutionPlan } from "./domain/workflow-spec.js";
 export type {
   LogicExpression,
   Urn,

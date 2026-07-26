@@ -31,7 +31,7 @@ No third shape was found - looping, chaining, and non-agentic conditional target
 
 ### Case 1/1b: minted, single-purpose, per-invocation callback references
 
-At binding-resolution time (extending `docs/adr/0004`'s resolver-per-kind model with a new resolution behavior, not a new IR construct), a nesting-target-shaped parameter's literal binding (D9c's existing "concrete nesting target supplied as an ordinary DSL binding") resolves **not to its literal value directly, but to a freshly minted, opaque, single-purpose callback reference** (a URL), delivered to the CLI invocation as an ordinary resolved parameter, exactly like any other binding value:
+At binding-resolution time (extending `docs/adr/0004`'s resolver-per-kind model with a new resolution behavior, not a new execution plan construct), a nesting-target-shaped parameter's literal binding (D9c's existing "concrete nesting target supplied as an ordinary DSL binding") resolves **not to its literal value directly, but to a freshly minted, opaque, single-purpose callback reference** (a URL), delivered to the CLI invocation as an ordinary resolved parameter, exactly like any other binding value:
 
 ```
 --enrich-target-url https://dispatch.internal/cb/f7a2b9...

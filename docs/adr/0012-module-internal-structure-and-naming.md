@@ -6,7 +6,7 @@ Proposed
 
 ## Context
 
-ADR-0007 fixed the **top-level** module inventory (`ir/`, `core/`,
+ADR-0007 fixed the **top-level** module inventory (`workflow-spec/`, `core/`,
 `engine/`, `scheduler/`, ... plus `src/apps/*`) and the dependency
 direction between those modules. ADR-0001 decided those boundaries are
 enforced by convention, review, and lint rules rather than package
@@ -37,7 +37,7 @@ domain/feature-first. This ADR only adds structure *inside* modules, plus
 one new cross-cutting module described in point 3.
 
 **2. Every module follows one repeatable internal shape.** Not every module
-needs every element - a pure module (`ir/`, `logic/`, `urn/`) has no
+needs every element - a pure module (`workflow-spec/`, `logic/`, `urn/`) has no
 `database/` - but where an element exists, it goes in the same place with
 the same name:
 
@@ -195,7 +195,7 @@ files and matches the existing Vitest `include` pattern (ADR-0009).
   as an import rule. It is also a poor fit for this system's actual shape:
   its "controllers" are three thin app entrypoints (`apps/worker`,
   `apps/dispatch-api`, `apps/mcp-gateway`), while its substance is deep,
-  heterogeneous domain logic (an IR compiler, a placement resolver, an MCP
+  heterogeneous domain logic (an execution-plan compiler, a placement resolver, an MCP
   gateway) that is not "services over models". Adding a module would mean
   touching four directories instead of one.
 - **Keep cross-cutting files at the top level** (`src/config.ts`,

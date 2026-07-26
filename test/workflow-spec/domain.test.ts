@@ -14,7 +14,7 @@ import type {
   Step,
   StepBinding,
   WorkflowSpec,
-} from "../../src/ir/index.js";
+} from "../../src/workflow-spec/index.js";
 
 // This file has no correctness property of its own beyond "this compiles"
 // (docs/impl-plans/0004-ir-schema.md's Test design) - TypeScript's
@@ -74,7 +74,7 @@ describe("ir domain types", () => {
     const outputBinding: Binding = stepBinding;
 
     const spec: WorkflowSpec = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "compile-check",
       sessionState: { k: sessionStateDecl },
       steps: [step],

@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://workflow-platform.internal/schemas/ir/workflow-spec.schema.json",
+  "$id": "https://workflow-platform.internal/schemas/workflow-spec/workflow-spec.schema.json",
   "title": "WorkflowSpec",
-  "description": "JSON Schema for the workflow-execution-platform IR (design.md D8/D8a/D8b/D8c/D8d/D16). Promoted from archive/dsl/schema/ (task 1.7) into ir/ (task 5.1, docs/impl-plans/0004-ir-schema.md), extended with the itemResource binding kind (D16). Validates the PARSED document structure only (YAML or JSON); the restricted-YAML profile (no anchors/aliases/merge-keys/custom-tags per D8a) is NOT and CANNOT be enforced here - that belongs to the parser (task 5.6a, a future dsl-compiler/).",
+  "description": "JSON Schema for the workflow-execution-platform's authoring-surface workflow-spec, currently identical to the execution plan the engine runs (design.md D8/D8a/D8b/D8c/D8d/D16). Promoted from archive/dsl/schema/ (task 1.7) into workflow-spec/ (task 5.1, docs/impl-plans/0004-workflow-spec-schema.md), extended with the itemResource binding kind (D16). Validates the PARSED document structure only (YAML or JSON); the restricted-YAML profile (no anchors/aliases/merge-keys/custom-tags per D8a) is NOT and CANNOT be enforced here - that belongs to the parser (task 5.6a, a future dsl-compiler/).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["irVersion", "name", "steps"],
+  "required": ["workflowSpecVersion", "name", "steps"],
   "properties": {
-    "irVersion": {
-      "description": "D8d/D11: locked field name. Integer, forward-only migration. This schema only requires its presence and integer type; migration itself is a separate, deferred package.",
+    "workflowSpecVersion": {
+      "description": "D8d/D11: locked field name (author-facing; renamed from irVersion). Integer, forward-only migration. This schema only requires its presence and integer type; migration itself is a separate, deferred package. Execution-plan versioning, once a future dsl-compiler/ splits the execution plan out into its own execution-plan/ module, is tracked separately.",
       "type": "integer",
       "minimum": 1
     },

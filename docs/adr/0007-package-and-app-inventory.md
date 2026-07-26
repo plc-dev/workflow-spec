@@ -7,7 +7,7 @@ Proposed (revised - see "Revision note" below)
 ## Context
 
 ADR-0001 through ADR-0006 each establish one seam of the software design
-(the single-package/language decision, the consolidated core, the IR spine,
+(the single-package/language decision, the consolidated core, the execution-plan spine,
 binding resolution, step-dispatch transport, and the control-plane/core
 split). This ADR draws the concrete module list those seams imply, including
 the one non-trivial promotion decision they force: `archive/placement-
@@ -28,8 +28,10 @@ trade rather than a weaker one in the way that actually matters).
 ```
 src/ (single package, all modules)
 
-  ir/                pure: WorkflowSpec/Step/Binding types, JSON Schema,
+  workflow-spec/     pure: WorkflowSpec/Step/Binding types, JSON Schema,
                       validate, migrate, deriveSignature            [ADR-0003]
+                      (execution-plan/ splits out of this once
+                      dsl-compiler/ exists - see ADR-0003)
   logic/             pure: JSON-Logic evaluator for `compute`         [D10]
   urn/               pure: URN parse/format (dataset + workflow schemes)
                                                                       [D8a, D13]
@@ -41,9 +43,9 @@ src/ (single package, all modules)
                       primitive (tracked-child-execution insert); the
                       outer CLI-dispatch invocation path, via the
                       exec-agent RPC client (ADR-0008)                [ADR-0005]
-                      (depends on core/, ir/)
+                      (depends on core/, workflow-spec/)
   scheduler/         placement decisions: fuses registry/'s
-                      getPlacementFacts + IR-declared intent +
+                      getPlacementFacts + execution-plan-declared intent +
                       core/'s placement repo observations
                       (the PROMOTED DECISION LOGIC half of
                       archive/placement-resolver/)                    [D4/D4a]
@@ -73,9 +75,9 @@ src/ (single package, all modules)
                       ADR-0001 decision 6)
   workflow-store/    control-plane store, OWN database                [ADR-0006]
                       (D13: URN identity, fork, lineage pin)
-  dsl-compiler/      restricted-YAML/JSON authoring surface -> IR
-                      (D8a/D8c); promotes archive/dsl/'s JSON Schema via
-                      ir/; offline/authoring-plane only
+  dsl-compiler/      restricted-YAML/JSON authoring surface -> execution
+                      plan (D8a/D8c); promotes archive/dsl/'s JSON Schema
+                      via workflow-spec/; offline/authoring-plane only
 
   apps/ (entrypoints, not packages - each bundled into its own Docker image)
 
@@ -102,7 +104,7 @@ agent/ (separate Go module - see ADR-0001 decision 3, ADR-0008)
 only the enforcement mechanism changed):**
 
 ```
-pure (ir/, logic/, urn/)
+pure (workflow-spec/, logic/, urn/)
    ^
    | (typed against, no I/O)
 domain logic (session/, scheduler/, dataset-catalog/, nesting/,
@@ -150,7 +152,7 @@ adapter for byte access.
   to a specific ADR or design.md decision - there is no "misc utilities"
   module.
 - The promotion of the three archived components is not a lift-and-shift:
-  `archive/dsl/` becomes `ir/` + `dsl-compiler/` (a schema is not a
+  `archive/dsl/` becomes `workflow-spec/` + `dsl-compiler/` (a schema is not a
   compiler); `archive/registry/` becomes `registry/` largely as-is (its
   structure already matches D12's privilege split); `archive/placement-
   resolver/` splits across `core/` and `scheduler/` as described above.

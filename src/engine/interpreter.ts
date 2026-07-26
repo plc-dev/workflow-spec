@@ -1,6 +1,6 @@
 import type { CoreRepos, WorkflowRun, WorkflowRunStatus } from "../core/index.js";
-import type { Step, WorkflowSpec } from "../ir/index.js";
 import { ERROR_IDS, FatalError, logger } from "../shared/index.js";
+import type { Step, WorkflowSpec } from "../workflow-spec/index.js";
 import type { BindingContext } from "./bindings.js";
 import { resolveBinding } from "./bindings.js";
 import { completeExecution } from "./claim-complete.js";
@@ -20,7 +20,8 @@ const LOG_EVENT_COMPLETE_STEP = "engine.completeStep";
  * node has a `kind` (branch/map) - 6.2a's explicit scope boundary,
  * task 6.2b's job. Local-review fix: also rejects (FatalError
  * ENGINE_DUPLICATE_NODE_ID) a spec with a repeated top-level node id -
- * neither the IR JSON Schema nor `executions` enforces this, and a
+ * neither the workflow-spec JSON Schema nor `executions` enforces this,
+ * and a
  * duplicate id previously let a run be marked `done` as soon as ONE of
  * the two same-id executions completed, while the other kept running
  * against an already-"done" run. */

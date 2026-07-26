@@ -1,4 +1,4 @@
-import type { Binding, Step } from "../ir/index.js";
+import type { Binding, Step } from "../workflow-spec/index.js";
 
 // Task 6.2a (docs/impl-plans/0006-interpreter-plain-steps.md), design.md
 // D8/D8a. Pure, no I/O - mirrors spike 1.5's own `externalDepsOf`: a

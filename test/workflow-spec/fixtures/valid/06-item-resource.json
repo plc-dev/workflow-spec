@@ -1,5 +1,5 @@
 {
-  "irVersion": 1,
+  "workflowSpecVersion": 1,
   "name": "item-resource-example",
   "description": "Exercises the itemResource binding (D15/D16) - a step reads a heavy leaf (the item's SQL dump) via an itemResource binding whose itemId is request-scoped.",
   "inputParameters": ["itemInstanceId"],

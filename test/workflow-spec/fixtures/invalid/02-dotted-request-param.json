@@ -1,10 +1,14 @@
 {
-  "name": "bad-missing-irversion",
+  "workflowSpecVersion": 1,
+  "name": "bad-dotted-param",
   "steps": [
     {
       "id": "runQuery",
       "service": "registry.internal/sql-exec@sha256:9f2c8e1a0000000000000000000000000000000000000000000000000000abcd",
-      "function": "query"
+      "function": "query",
+      "reads": {
+        "sql": { "from": "request", "param": "body.query" }
+      }
     }
   ]
 }

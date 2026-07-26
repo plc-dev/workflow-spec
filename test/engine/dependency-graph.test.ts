@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { collectStepBindingIds, computeStepDependencies } from "../../src/engine/index.js";
-import type { Step } from "../../src/ir/index.js";
+import type { Step } from "../../src/workflow-spec/index.js";
 
 // TC-8 (docs/impl-plans/0006-interpreter-plain-steps.md): dependency
 // inference is a pure, generic walk (design.md D8a's `dependsOn` escape

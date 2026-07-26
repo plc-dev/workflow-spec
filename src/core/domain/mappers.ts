@@ -96,8 +96,8 @@ export function mapPlacementRow(row: PlacementRow): Placement {
 // `config` is JSONB - already a plain object by the time `pg` returns it,
 // no JSON.parse needed. Cast, not validated: this row is only ever
 // written by this codebase's own seeded schema.sql data, never
-// externally authored input (unlike ir/validate.ts's untrusted-document
-// case).
+// externally authored input (unlike workflow-spec/validate.ts's
+// untrusted-document case).
 export function mapPlacementConfigRow(row: PlacementConfigRow): PlacementConfig {
   return row.config as PlacementConfig;
 }

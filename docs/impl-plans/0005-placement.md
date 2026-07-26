@@ -32,7 +32,7 @@ how 6.1 was split into 6.1a/6.1b):**
   and **4.2/4.3** (shared read-only path, affinity hinting) - this package
   builds the *mechanism* `resolvePlacement`/`recordAccess` are (the
   "runtime observation" leg), but there is no `registry/` client (capability
-  metadata) or `dsl-compiler/`/`ir/`-derived intent feeding it yet, so
+  metadata) or `dsl-compiler/`/`workflow-spec/`-derived intent feeding it yet, so
   nothing actually calls `scheduler/` end to end. 4.1-4.3 stay open until a
   real caller (a future `apps/worker` or an interim wiring package) exists.
 - **4.4** (adaptive promotion) and **4.6** (LRU eviction) - `evaluatePromotion`/
@@ -61,7 +61,7 @@ how 6.1 was split into 6.1a/6.1b):**
   `core/` owns, and states that `scheduler/` "receives a transaction... and
   never opens its own connection or owns any schema."
 - **ADR-0007** (module inventory): names `scheduler/` as "placement
-  decisions: fuses registry/'s `getPlacementFacts` + IR-declared intent +
+  decisions: fuses registry/'s `getPlacementFacts` + execution-plan-declared intent +
   `core/`'s placement repo observations (the PROMOTED DECISION LOGIC half
   of `archive/placement-resolver/`)" and gives the exact split this package
   implements - tables into `core/`, `resolvePlacement`/`recordAccess`/
@@ -374,7 +374,7 @@ already-fetched `Placement`/`TrustTier` value.
 - **What it depends on:** `core/`'s `withTransaction`/`CoreRepos` shape
   (0001, already built) - this package only adds new repos to an existing
   `CoreRepos` object, touching no existing repo's behavior. Nothing from
-  `registry/` or `dsl-compiler/`/`ir/`'s eventual IR-to-engine compilation
+  `registry/` or `dsl-compiler/`/`workflow-spec/`'s eventual execution-plan-to-engine compilation
   is required - `scheduler/`'s functions take plain primitive inputs
   (`contentHash`, `interactivity`, trust tier) exactly as the archived
   module already did, deferring "where do these values come from" to

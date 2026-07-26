@@ -65,10 +65,10 @@ read from the current execution's already-recorded outputs/`yields`.
   binding-kind implementation has to remember independently.
 - Secrets remain categorically excluded from this interface (D7, D10):
   there is no `secret` binding kind, and `compute`'s `using` inputs are
-  rejected at validation time (`@wfx/ir`) if they reference one.
-- Adding a new binding kind later (the IR already anticipates this
-  possibility structurally, per D8) means adding one resolver, not touching
-  every consumer of `Binding`.
+  rejected at validation time (`@wfx/execution-plan`) if they reference one.
+- Adding a new binding kind later (the execution plan already anticipates
+  this possibility structurally, per D8) means adding one resolver, not
+  touching every consumer of `Binding`.
 
 ## Alternatives considered
 

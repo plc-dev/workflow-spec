@@ -8,15 +8,15 @@ import {
   resolveStepReads,
   submitRun,
 } from "../../src/engine/index.js";
-import type { WorkflowSpec } from "../../src/ir/index.js";
 import { ERROR_IDS, FatalError } from "../../src/shared/index.js";
+import type { WorkflowSpec } from "../../src/workflow-spec/index.js";
 import { type TestPostgres, startTestPostgres } from "../helpers/postgres.js";
 
 // A -> B -> C dependency chain, exercising both the `dependsOn` escape
 // hatch (D8a) and inferred `{from:"step"}` dependencies (D8) together on
 // node C. Matches this package's plan doc's TC-2 fixture.
 const THREE_NODE_SPEC: WorkflowSpec = {
-  irVersion: 1,
+  workflowSpecVersion: 1,
   name: "three-node-chain",
   steps: [
     {
@@ -157,7 +157,7 @@ describe("engine interpreter (plain-step dependency graph)", () => {
   // an explicit scope boundary for 6.2b, not silent misbehavior.
   it("rejects a spec containing a branch node, inserting no rows", async () => {
     const specWithBranch: WorkflowSpec = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "has-branch",
       steps: [
         {
@@ -185,7 +185,7 @@ describe("engine interpreter (plain-step dependency graph)", () => {
   // now covering this package's new workflow-run bookkeeping.
   it("rolls back checkpoint + run_node_outputs + promotion together on a mid-transaction crash", async () => {
     const twoNodeSpec: WorkflowSpec = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "two-node",
       steps: [
         { id: "A", service: "svc@sha256:aaa", function: "f" },
@@ -260,7 +260,7 @@ describe("engine interpreter (plain-step dependency graph)", () => {
   // serializes the two completions instead.
   it("promotes a diamond-dependency node when its two sibling deps complete under genuinely overlapping transactions", async () => {
     const diamondSpec: WorkflowSpec = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "diamond",
       steps: [
         { id: "X", service: "svc@sha256:xxx", function: "f" },
@@ -301,7 +301,7 @@ describe("engine interpreter (plain-step dependency graph)", () => {
   // executions "complete" the run while the other keeps running.
   it("rejects a spec containing duplicate top-level node ids, inserting no rows", async () => {
     const duplicateIdSpec: WorkflowSpec = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "duplicate-id",
       steps: [
         { id: "A", service: "svc@sha256:aaa", function: "f" },
@@ -320,7 +320,7 @@ describe("engine interpreter (plain-step dependency graph)", () => {
   // Local-review fix: a schema-valid zero-step spec is marked `done`
   // immediately rather than left permanently `running`.
   it("marks a zero-step spec's run done immediately", async () => {
-    const emptySpec: WorkflowSpec = { irVersion: 1, name: "empty", steps: [] };
+    const emptySpec: WorkflowSpec = { workflowSpecVersion: 1, name: "empty", steps: [] };
 
     const run = await withTransaction(tp.pool, (repos) => submitRun(repos, emptySpec, {}));
     expect(run.status).toBe("done");

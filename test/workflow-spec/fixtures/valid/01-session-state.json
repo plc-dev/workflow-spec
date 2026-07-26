@@ -1,5 +1,5 @@
 {
-  "irVersion": 1,
+  "workflowSpecVersion": 1,
   "name": "session-state-example",
   "description": "Declares one session key with interactivity + a static fallback (D8a).",
   "sessionState": {

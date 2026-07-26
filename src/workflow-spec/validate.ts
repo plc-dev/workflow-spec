@@ -1,10 +1,10 @@
 // design.md D8/D8a/D8c/D16: schema validation of an already-parsed
 // WorkflowSpec document (JSON or already-parsed YAML - the restricted-
 // YAML profile itself is a future dsl-compiler/'s job, not this
-// package's - see docs/impl-plans/0004-ir-schema.md).
+// package's - see docs/impl-plans/0004-workflow-spec-schema.md).
 
 import { Ajv2020, type ErrorObject } from "ajv/dist/2020.js";
-import { IR_JSON_SCHEMA } from "./constants.js";
+import { WORKFLOW_SPEC_JSON_SCHEMA } from "./constants.js";
 
 export interface ValidationError {
   /** ajv instancePath, e.g. "/steps/0/service". */
@@ -20,14 +20,14 @@ export interface ValidationResult {
 /** Error id used for the one ValidationError this module ever fabricates
  * itself, rather than relaying ajv's own - see `validate()`'s recursion
  * guard below. */
-const ERROR_ID_MAX_NESTING_DEPTH_EXCEEDED = "ir.validate.max_nesting_depth_exceeded";
+const ERROR_ID_MAX_NESTING_DEPTH_EXCEEDED = "workflow-spec.validate.max_nesting_depth_exceeded";
 
 // Compiled once at module load - validate() itself is a cheap, synchronous
 // call with no scheduling/registry/placement involvement (D10's own
 // framing for compute applies equally well to schema validation: this is
 // pure, in-memory, and free to call).
 const ajv = new Ajv2020({ allErrors: true, strict: true });
-const validateFn = ajv.compile(IR_JSON_SCHEMA);
+const validateFn = ajv.compile(WORKFLOW_SPEC_JSON_SCHEMA);
 
 function toValidationError(error: ErrorObject): ValidationError {
   return {
@@ -37,8 +37,9 @@ function toValidationError(error: ErrorObject): ValidationError {
 }
 
 /**
- * Validates the parsed document structure against the IR JSON Schema.
- * Never throws on an invalid document - returns `{ valid: false, errors }`
+ * Validates the parsed document structure against the workflow-spec
+ * JSON Schema. Never throws on an invalid document - returns
+ * `{ valid: false, errors }`
  * so callers (a future dsl-compiler/, a future workflow-spec store)
  * decide what to do with an invalid document.
  *

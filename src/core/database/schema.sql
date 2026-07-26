@@ -64,7 +64,8 @@ CREATE INDEX IF NOT EXISTS executions_claimable_idx ON executions (status, lease
 
 -- Task 6.2a (docs/impl-plans/0006-interpreter-plain-steps.md): links an
 -- execution row to the workflow_runs row (below) it was created for, and
--- reuses the pre-existing `step` column as that run's IR node id (a
+-- reuses the pre-existing `step` column as that run's execution-plan node id
+-- (a
 -- WorkflowSpec node's `id` is already a free-text label with no FK/enum
 -- constraint - exactly what `step` already was, so no second, redundant
 -- column was added). NULL for every execution NOT created by
@@ -391,10 +392,10 @@ CREATE INDEX IF NOT EXISTS placement_access_hash_time_idx
 -- (design.md D8), promoted from archive/spikes/1.5-ir-interpreter/'s
 -- already-proven `workflow_runs`/`run_node_outputs` pattern. `spec` is
 -- stored as `unknown` (cast, not validated, by core/domain/workflow-
--- run.ts) rather than a typed `ir.WorkflowSpec` - `core/` does not depend
--- on `ir/` (ADR-0007's dependency direction runs the other way); the
--- caller (engine/) is responsible for having already run `ir.validate()`
--- before `submitRun` is ever called.
+-- run.ts) rather than a typed `workflowSpec.WorkflowSpec` - `core/` does
+-- not depend on `workflow-spec/` (ADR-0007's dependency direction runs
+-- the other way); the caller (engine/) is responsible for having already
+-- run `workflowSpec.validate()` before `submitRun` is ever called.
 CREATE TABLE IF NOT EXISTS workflow_runs (
     id            BIGSERIAL PRIMARY KEY,
     session_id    TEXT,

@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { validate } from "../../src/ir/index.js";
+import { validate } from "../../src/workflow-spec/index.js";
 
 // Pure module - no database, no I/O beyond loading these fixture files
 // (docs/impl-plans/0004-ir-schema.md's Test design: default Vitest is
@@ -48,20 +48,20 @@ describe("validate() - whole-document fixtures", () => {
 
 // TC-2: required top-level fields.
 describe("validate() - TC-2 required top-level fields", () => {
-  it("rejects a doc missing irVersion", () => {
+  it("rejects a doc missing workflowSpecVersion", () => {
     const result = validate({ name: "x", steps: [] });
     expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.message.includes("irVersion"))).toBe(true);
+    expect(result.errors.some((e) => e.message.includes("workflowSpecVersion"))).toBe(true);
   });
 
   it("rejects a doc missing name", () => {
-    const result = validate({ irVersion: 1, steps: [] });
+    const result = validate({ workflowSpecVersion: 1, steps: [] });
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("name"))).toBe(true);
   });
 
   it("rejects a doc missing steps", () => {
-    const result = validate({ irVersion: 1, name: "x" });
+    const result = validate({ workflowSpecVersion: 1, name: "x" });
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("steps"))).toBe(true);
   });
@@ -69,7 +69,7 @@ describe("validate() - TC-2 required top-level fields", () => {
 
 function stepReading(readsBinding: unknown): unknown {
   return {
-    irVersion: 1,
+    workflowSpecVersion: 1,
     name: "binding-probe",
     steps: [
       {
@@ -161,7 +161,7 @@ describe("validate() - TC-6 dataset URN scheme", () => {
 describe("validate() - TC-7 digest-pinned service refs", () => {
   it("accepts a digest-pinned service", () => {
     const doc = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "x",
       steps: [{ id: "s1", service: `r@sha256:${"a".repeat(64)}`, function: "f" }],
     };
@@ -170,7 +170,7 @@ describe("validate() - TC-7 digest-pinned service refs", () => {
 
   it("rejects a bare-tag service reference", () => {
     const doc = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "x",
       steps: [{ id: "s1", service: "r:v1", function: "f" }],
     };
@@ -182,7 +182,7 @@ describe("validate() - TC-7 digest-pinned service refs", () => {
 describe("validate() - TC-8 secrets excluded from Binding", () => {
   it("accepts a well-formed secrets block on a step", () => {
     const doc = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "x",
       steps: [
         {
@@ -209,7 +209,7 @@ describe("validate() - TC-8 secrets excluded from Binding", () => {
 describe("validate() - TC-9 branch cases", () => {
   function branchDoc(cases: unknown): unknown {
     return {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "x",
       steps: [
         {
@@ -241,7 +241,7 @@ describe("validate() - TC-9 branch cases", () => {
 describe("validate() - TC-10 map body", () => {
   function mapDoc(body: unknown): unknown {
     return {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "x",
       steps: [{ id: "m1", kind: "map", source: { from: "item" }, body }],
     };
@@ -274,7 +274,7 @@ describe("validate() - TC-11 nested branch/map", () => {
       body: [innerBranch],
     };
     const doc = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "x",
       steps: [
         {
@@ -293,7 +293,7 @@ describe("validate() - TC-11 nested branch/map", () => {
 describe("validate() - TC-12 sessionState", () => {
   it("accepts interactive-with-fallback and batch-without-fallback keys", () => {
     const doc = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "x",
       sessionState: {
         a: { interactivity: "interactive", fallback: { from: "item" } },
@@ -306,7 +306,7 @@ describe("validate() - TC-12 sessionState", () => {
 
   it("rejects a sessionState key missing interactivity", () => {
     const doc = {
-      irVersion: 1,
+      workflowSpecVersion: 1,
       name: "x",
       sessionState: { a: { fallback: { from: "item" } } },
       steps: [{ id: "s", service: `r@sha256:${"a".repeat(64)}`, function: "f" }],
@@ -318,7 +318,7 @@ describe("validate() - TC-12 sessionState", () => {
 // TC-13: additionalProperties: false throughout.
 describe("validate() - TC-13 additionalProperties: false", () => {
   it("rejects an unrecognized top-level property", () => {
-    const doc = { irVersion: 1, name: "x", steps: [], foo: 1 };
+    const doc = { workflowSpecVersion: 1, name: "x", steps: [], foo: 1 };
     expect(validate(doc).valid).toBe(false);
   });
 

@@ -45,15 +45,15 @@ The DSL SHALL allow the same underlying service function to be bound with differ
 - **THEN** the DSL SHALL accept both workflow-specs independently, with each binding's declared intent governing its own execution
 
 ### Requirement: Authored workflow-specs compile to a stable intermediate representation
-The system SHALL compile any authored workflow-spec, regardless of authoring surface (e.g. a declarative document or a code-based builder), into a single stable intermediate representation (IR) consisting of steps, bindings, write declarations, secret references, and outputs. Only the IR SHALL be consumed by the execution engine and scheduler.
+The system SHALL compile any authored workflow-spec, regardless of authoring surface (e.g. a declarative document or a code-based builder), into a single stable intermediate representation, the **execution plan**, consisting of steps, bindings, write declarations, secret references, and outputs. Only the execution plan SHALL be consumed by the execution engine and scheduler.
 
-#### Scenario: Two authoring surfaces produce equivalent IR
+#### Scenario: Two authoring surfaces produce equivalent execution plans
 - **WHEN** an equivalent workflow is authored once via a declarative surface and once via a code-based builder surface
-- **THEN** both SHALL compile to IR that the execution engine treats identically
+- **THEN** both SHALL compile to execution plans that the execution engine treats identically
 
 #### Scenario: Authoring-time computation does not require runtime determinism
 - **WHEN** an authoring surface uses non-deterministic constructs (e.g. reading a local config file, calling an external API) to help construct a workflow-spec
-- **THEN** this SHALL be permitted, because such constructs execute only at compile/synthesis time and never appear in the resulting IR or at workflow run time
+- **THEN** this SHALL be permitted, because such constructs execute only at compile/synthesis time and never appear in the resulting execution plan or at workflow run time
 
 ### Requirement: A session key's seed/fallback source is declared once, in `sessionState`
 The DSL SHALL allow a `sessionState` declaration to specify a fallback source (e.g. a static reference) to be used the first time that session key is read, before any session-owned snapshot exists for it. This SHALL be declared once per key, not repeated on individual bindings.
@@ -107,7 +107,7 @@ The DSL SHALL support a `literal` binding kind whose value is a fixed value (inc
 - **THEN** the DSL SHALL pass it through opaquely, the same way a compound `request`-scoped parameter value is passed through
 
 ### Requirement: Workflow-spec exposes a derived signature
-The system SHALL derive, from a workflow-spec's IR, a signature consisting of: the set of request-scoped parameters callers must supply, whether execution requires an active session, and the set of named outputs - without requiring the workflow-writer to author this signature separately.
+The system SHALL derive, from a workflow-spec's execution plan, a signature consisting of: the set of request-scoped parameters callers must supply, whether execution requires an active session, and the set of named outputs - without requiring the workflow-writer to author this signature separately.
 
 #### Scenario: Signature derived from bindings
 - **WHEN** a workflow-spec is compiled
@@ -118,15 +118,15 @@ The system SHALL derive, from a workflow-spec's IR, a signature consisting of: t
 - **THEN** the system SHALL make it discoverable to callers (e.g. the frontend) through the workflow-spec store's discovery mechanism (see `workflow-spec-store`) - not through the service registry, which indexes service images only
 
 ### Requirement: A step invokes a registered service function; workflow-to-workflow reuse is not a step-level construct
-A step SHALL be defined as an invocation of a discoverable function of a registered service image. The DSL SHALL NOT provide a step kind that references another workflow-spec at run time; reuse of one workflow-spec by another happens by forking at authoring time (see `workflow-spec-store`), which produces an ordinary, self-contained workflow-spec whose steps are indistinguishable, at the DSL/IR level, from steps authored directly.
+A step SHALL be defined as an invocation of a discoverable function of a registered service image. The DSL SHALL NOT provide a step kind that references another workflow-spec at run time; reuse of one workflow-spec by another happens by forking at authoring time (see `workflow-spec-store`), which produces an ordinary, self-contained workflow-spec whose steps are indistinguishable, at the DSL/execution-plan level, from steps authored directly.
 
 #### Scenario: A forked workflow-spec's steps are ordinary steps
 - **WHEN** a workflow-spec was produced by forking another workflow-spec
 - **THEN** its steps SHALL be defined the same way as any directly-authored step (an invocation of a registered service function), with no residual step-level dependency on the source workflow-spec
 
 #### Scenario: There is no run-time reference to another workflow-spec
-- **WHEN** a workflow-spec is compiled to IR
-- **THEN** the IR SHALL NOT contain a reference to another workflow-spec's identity that requires resolution at run time; any relationship to a source workflow-spec is fork-lineage metadata external to the IR (see `workflow-spec-store`), not a binding or step
+- **WHEN** a workflow-spec is compiled to an execution plan
+- **THEN** the execution plan SHALL NOT contain a reference to another workflow-spec's identity that requires resolution at run time; any relationship to a source workflow-spec is fork-lineage metadata external to the execution plan (see `workflow-spec-store`), not a binding or step
 
 ### Requirement: A concrete nesting target is supplied as an ordinary DSL binding, not a registry-level declaration
 Where a registered service's function declares (via its `nesting_declaration` capability metadata, see `service-registry`) that it may nest other services' functionality, the DSL SHALL allow the concrete function(s) that fill that nesting to be supplied as ordinary parameter bindings of the step invoking that function - not as a separate, nesting-specific DSL construct.
@@ -162,7 +162,7 @@ Where a parameter's declared contract (an OpenAPI `callbacks`/`webhooks` object,
 - **THEN** the DSL SHALL reject the workflow-spec at compile time, identifying the incompatible binding
 
 ### Requirement: Branch construct with statically enumerable cases
-The DSL SHALL support a branch construct that selects one of several statically declared sub-graphs to execute based on a runtime value, and SHALL require every possible case (including a default) to be declared in the IR even though only one is executed per run.
+The DSL SHALL support a branch construct that selects one of several statically declared sub-graphs to execute based on a runtime value, and SHALL require every possible case (including a default) to be declared in the execution plan even though only one is executed per run.
 
 #### Scenario: Runtime value selects a declared case
 - **WHEN** a branch step evaluates its selector against a runtime value matching one of its declared cases
@@ -299,19 +299,19 @@ The DSL SHALL validate, for every step, that a binding is supplied for each para
 - **WHEN** a step invokes a registered service whose signature declares `allowedTools` and `governor` as required parameters (e.g. an agent-runner service nesting other services per an "open" target declaration - see the `service-nesting` capability)
 - **THEN** this generic rule alone SHALL require the workflow-writer to supply both bindings, with no DSL-level construct specific to agents or allowlists
 
-### Requirement: IR carries a whole-document version tag with forward-only, lazy migration
-Every compiled IR document SHALL carry a whole-document version tag, named `irVersion`, at the top level of the document. The system SHALL migrate a document to the current version lazily the first time it is opened, using a chain of version-to-version migrators, and SHALL NOT support migrating a document backward to an older version.
+### Requirement: Workflow-spec carries a whole-document version tag with forward-only, lazy migration
+Every compiled workflow-spec document SHALL carry a whole-document version tag, named `workflowSpecVersion`, at the top level of the document. (Renamed from `irVersion` to make its author-facing scope explicit - see `docs/glossary.md`. Execution-plan versioning, once a future compiler splits the execution plan from the workflow-spec, is a separate, deferred concern - see design.md D11's terminology-amendment note.) The system SHALL migrate a document to the current version lazily the first time it is opened, using a chain of version-to-version migrators, and SHALL NOT support migrating a document backward to an older version.
 
 #### Scenario: Older document is migrated on open
-- **WHEN** a workflow-spec IR document tagged with an older, still-supported version is opened
+- **WHEN** a workflow-spec document tagged with an older, still-supported version is opened
 - **THEN** the system SHALL apply the applicable chain of migrators and SHALL persist the result in the current version's form on next save
 
 #### Scenario: Document newer than the reader is rejected
-- **WHEN** a workflow-spec IR document's version tag is newer than the version the reader (e.g. the UI tool or the runtime) understands
+- **WHEN** a workflow-spec document's version tag is newer than the version the reader (e.g. the UI tool or the runtime) understands
 - **THEN** the system SHALL fail closed with an explicit unsupported-version error rather than attempting a best-effort read
 
 #### Scenario: Additive change does not require a version bump
-- **WHEN** a new binding kind or a new optional step field with a default value is added to the IR schema
+- **WHEN** a new binding kind or a new optional step field with a default value is added to the workflow-spec schema
 - **THEN** this SHALL NOT require bumping the version tag, since existing documents remain valid without migration
 
 ### Requirement: An `itemResource` binding kind resolves a request-scoped item identifier and path into an item-type resource, deferring the shared-vs-inline classification to run time
@@ -340,7 +340,7 @@ An `itemResource` binding's `path` SHALL be permitted to address an arbitrarily 
 - **WHEN** an `itemResource` binding's `path` does not exist within a given item instance's actual resolved manifest at run time
 - **THEN** the system SHALL surface this as a run-time resolution failure; the DSL SHALL NOT be required to detect this at compile time, since keeping a workflow-spec's `itemResource` paths consistent with an item type's resource shape is delegated to external authoring tooling and/or the item type's own authoring flow, not enforced by the platform
 
-### Requirement: Deprecated IR versions require a migration sweep before retirement
+### Requirement: Deprecated workflow-spec versions require a migration sweep before retirement
 The system SHALL define a minimum supported version window and SHALL require a batch migration sweep over all stored workflow-specs below that window before retiring the migrators for versions outside it.
 
 #### Scenario: Retiring an old migrator

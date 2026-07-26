@@ -1,5 +1,5 @@
-import type { Binding } from "../ir/index.js";
 import { ERROR_IDS, FatalError } from "../shared/index.js";
+import type { Binding } from "../workflow-spec/index.js";
 
 // Task 6.2a (docs/impl-plans/0006-interpreter-plain-steps.md). Resolves
 // `request`/`step`/`literal` bindings only - every other kind

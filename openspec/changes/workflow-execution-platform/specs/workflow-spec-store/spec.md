@@ -23,7 +23,7 @@ The workflow-spec store SHALL keep every published workflow-spec under its URN i
 
 #### Scenario: Discovering a workflow-spec's signature
 - **WHEN** a caller looks up a published workflow-spec by identity and version
-- **THEN** the store SHALL return its derived signature, sufficient for callers to invoke it without loading its full internal IR
+- **THEN** the store SHALL return its derived signature, sufficient for callers to invoke it without loading its full internal execution plan
 
 ### Requirement: A workflow-spec has no trust tier
 The workflow-spec store SHALL NOT apply a capability-declaration trust-tier model (per D5a) to workflow-specs. A workflow-spec's runtime behavior SHALL continue to depend only on the trust tiers of the individual registered service images its steps invoke.
@@ -33,7 +33,7 @@ The workflow-spec store SHALL NOT apply a capability-declaration trust-tier mode
 - **THEN** each step's placement SHALL be governed by that step's own service image's trust tier (per `service-registry`/D5a), and the workflow-spec itself SHALL NOT carry or require a separate trust tier
 
 ### Requirement: Reuse of a workflow-spec is by fork, producing a self-contained copy
-When a workflow-writer reuses another workflow-spec, the store SHALL support this as a fork operation: the source workflow-spec's shape and steps are copied into a new workflow-spec under the forking writer's own namespace at authoring time. The resulting forked workflow-spec SHALL be self-contained - its IR SHALL require no run-time resolution of, or dependency on, the source workflow-spec.
+When a workflow-writer reuses another workflow-spec, the store SHALL support this as a fork operation: the source workflow-spec's shape and steps are copied into a new workflow-spec under the forking writer's own namespace at authoring time. The resulting forked workflow-spec SHALL be self-contained - its execution plan SHALL require no run-time resolution of, or dependency on, the source workflow-spec.
 
 #### Scenario: A fork is self-contained at execution time
 - **WHEN** a forked workflow-spec is executed
@@ -98,9 +98,9 @@ The workflow-spec store SHALL NOT be required to detect or reject a fork-lineage
 - **WHEN** a fork-lineage chain contains a cycle
 - **THEN** execution of any workflow-spec in that chain SHALL be unaffected, since lineage is not a run-time resolution mechanism
 
-### Requirement: IR-version mismatch on fork is resolved by the authoring tool, not the platform
-When a source workflow-spec and the forking writer's own work are authored against different IR versions (per the IR versioning model), the workflow-spec store SHALL NOT be required to silently migrate or reject the mismatch. Surfacing and resolving such a mismatch SHALL be the responsibility of the external authoring tool, presented to the workflow-author for resolution.
+### Requirement: Workflow-spec-version mismatch on fork is resolved by the authoring tool, not the platform
+When a source workflow-spec and the forking writer's own work are authored against different workflow-spec versions (per the `workflowSpecVersion` versioning model), the workflow-spec store SHALL NOT be required to silently migrate or reject the mismatch. Surfacing and resolving such a mismatch SHALL be the responsibility of the external authoring tool, presented to the workflow-author for resolution.
 
 #### Scenario: A version mismatch is surfaced to the author, not silently resolved
-- **WHEN** a workflow-writer forks a workflow-spec authored against a different IR version than their own current work
+- **WHEN** a workflow-writer forks a workflow-spec authored against a different workflow-spec version than their own current work
 - **THEN** the platform SHALL NOT be required to automatically migrate either workflow-spec, and the authoring tool SHALL be responsible for surfacing this mismatch to the author

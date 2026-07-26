@@ -63,7 +63,7 @@ Once an item instance's resources have been resolved for a given learner's attem
 - **THEN** every `itemResource` binding referencing that instance SHALL continue to resolve to the same dataset reference/value for the remainder of that attempt
 
 ### Requirement: Item confidentiality and item-type/instance shape consistency are delegated entirely to the Item Pool and external authoring tooling
-The system SHALL NOT implement per-item visibility/access-control, or per-namespace item tenancy, as a platform invariant; the Item Pool is solely responsible for ensuring it only ever hands the platform a manifest it is authorized to resolve. The system SHALL NOT validate, at workflow-spec authoring or IR-compile time, that a workflow-spec's `itemResource` paths match a given item type's actual resource shape; this consistency is the responsibility of external authoring tooling and/or the Item Pool's own item-authoring flow.
+The system SHALL NOT implement per-item visibility/access-control, or per-namespace item tenancy, as a platform invariant; the Item Pool is solely responsible for ensuring it only ever hands the platform a manifest it is authorized to resolve. The system SHALL NOT validate, at workflow-spec authoring or execution-plan-compile time, that a workflow-spec's `itemResource` paths match a given item type's actual resource shape; this consistency is the responsibility of external authoring tooling and/or the Item Pool's own item-authoring flow.
 
 #### Scenario: The platform enforces no item-level access control
 - **WHEN** an item instance's manifest is resolved and mirrored into the platform's dataset resource catalog

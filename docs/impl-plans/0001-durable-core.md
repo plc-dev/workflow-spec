@@ -43,7 +43,7 @@ package, checked off) and 6.1b (left open, new).
   `withTransaction(fn) -> repos` shape, and the rule that `engine/` never
   opens its own connection.
 - **ADR-0007** (module inventory): `core/` and `engine/` module
-  boundaries and dependency direction (`engine/` depends on `core/`, `ir/`;
+  boundaries and dependency direction (`engine/` depends on `core/`, `workflow-spec/`;
   nothing depends on `engine/` yet since `apps/worker` doesn't exist).
 - **ADR-0001/0009** (single TypeScript package, tooling): no `packages/`
   workspace, ESM, `strict` TS, raw `pg`, Vitest + testcontainers-node,

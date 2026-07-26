@@ -7,9 +7,10 @@
 ## Scope
 
 This package is the first real (non-spike) implementation of `engine/`'s
-generic IR interpreter (task 6.2) - the piece that actually ties together
-everything the four prior packages built: `ir/` (0004, the WorkflowSpec/
-Node/Binding types), `core/`'s `executions`/`checkpoints` durability layer
+generic execution-plan interpreter (task 6.2) - the piece that actually
+ties together everything the four prior packages built: `workflow-spec/`
+(0004, the WorkflowSpec/Node/Binding types), `core/`'s
+`executions`/`checkpoints` durability layer
 (0001), durable sleep (0002, not exercised here but sharing the same
 `executions` table), and the composable `claimExecution`/`completeExecution`
 primitives (0001's `engine/claim-complete.ts`).
@@ -53,7 +54,7 @@ pattern):**
   internal step ids are unreachable from outside the node) are 6.2b's job.
 - **5.4** (data-binding syntax for user/static/session references) -
   `request`/`step`/`literal` only; `session`/`static`/`item`/`itemResource`
-  binding kinds are recognized by `ir/`'s types (already done, 0004) but
+  binding kinds are recognized by `workflow-spec/`'s types (already done, 0004) but
   resolveBinding throws a clear, explicit "not supported yet" error for
   them here - exactly spike 1.5's own posture for the same gap.
 - **5.12** (compute binding evaluation) - deliberately not attempted;
@@ -94,10 +95,10 @@ pattern):**
 - **ADR-0002** (`core/` owns the consolidated schema) - `workflow_runs`
   and `run_node_outputs` are new `core/`-owned tables, not an `engine/`-
   owned store; `engine/` continues to never open its own connection.
-- **ADR-0007** (module inventory) - `engine/` "depends on `core/`, `ir/`"
+- **ADR-0007** (module inventory) - `engine/` "depends on `core/`, `workflow-spec/`"
   and is "the durable-exec interpreter" - this package is the first code
   to actually exercise that dependency edge (0001/0002 built `engine/`'s
-  primitives without needing `ir/` at all; this package is where `ir/`'s
+  primitives without needing `workflow-spec/` at all; this package is where `workflow-spec/`'s
   types are first imported by `engine/`).
 - **ADR-0012** (module-internal structure) - `engine/`'s existing flat
   shape (`claim-complete.ts`, `wait.ts`, no `domain/`/`database/`, since
@@ -107,19 +108,20 @@ pattern):**
 **Open questions these sources leave unresolved, resolved here as a call
 this package makes:**
 
-- **Where does a submitted run's IR document live - inline on the run
-  row, or referenced by id into `workflow-store/` (task 11.x)?** Resolved:
-  **inline** (`workflow_runs.spec`, JSONB). `workflow-store/` (URN
-  identity, fork, versioning) doesn't exist yet, and `engine/`'s ADR-0007
-  dependency edge is `ir/`, not `workflow-store/` - a run is submitted
-  with an already-resolved `WorkflowSpec` value, exactly as spike 1.5 and
-  the generic-interpreter framing in D8 assume. `core/domain/
+- **Where does a submitted run's execution-plan document live - inline on
+  the run row, or referenced by id into `workflow-store/` (task 11.x)?**
+  Resolved: **inline** (`workflow_runs.spec`, JSONB). `workflow-store/`
+  (URN identity, fork, versioning) doesn't exist yet, and `engine/`'s
+  ADR-0007 dependency edge is `workflow-spec/`, not `workflow-store/` - a
+  run is submitted with an already-resolved `WorkflowSpec` value, exactly
+  as spike 1.5 and the generic-interpreter framing in D8 assume. `core/domain/
   workflow-run.ts` types `spec` as `unknown` (not `WorkflowSpec`), the
   same "cast, not validated" posture `mapPlacementConfigRow` already uses
-  for `placement_config.config` - keeping `core/` from depending on `ir/`
-  (ADR-0007's dependency direction: `core/` sits below `engine/`, which is
-  the one that depends on `ir/`, not the other way around). `engine/`
-  casts after the fact, on the understanding that `ir/validate.ts` (0004)
+  for `placement_config.config` - keeping `core/` from depending on
+  `workflow-spec/` (ADR-0007's dependency direction: `core/` sits below
+  `engine/`, which is the one that depends on `workflow-spec/`, not the
+  other way around). `engine/` casts after the fact, on the understanding
+  that `workflow-spec/validate.ts` (0004)
   has already validated the document before `submitRun` is ever called -
   `submitRun` itself does not re-invoke `validate()`.
 - **How does a downstream node discover an upstream node's output across
@@ -237,9 +239,10 @@ export type WorkflowRunStatus = "running" | "done" | "failed";
 export interface WorkflowRun {
   id: number;
   sessionId: string | null;
-  /** Cast, not validated, by core/ - see Scope's "Open questions".
-   * ir/validate.ts already validated this document before submitRun was
-   * called; core/ does not depend on ir/ (ADR-0007). */
+   /** Cast, not validated, by core/ - see Scope's "Open questions".
+    * workflow-spec/validate.ts already validated this document before
+    * submitRun was called; core/ does not depend on workflow-spec/
+    * (ADR-0007). */
   spec: unknown;
   input: unknown;
   status: WorkflowRunStatus;
@@ -294,7 +297,7 @@ export interface ExecutionsRepo {
 }
 
 // src/engine/dependency-graph.ts (pure, no I/O)
-import type { Binding, Step } from "../ir/index.js";
+import type { Binding, Step } from "../workflow-spec/index.js";
 /** Generic walk for a nested {from:"step", id} reference - independent of
  * whether that binding kind is resolvable yet (see Scope's Open
  * questions). */
@@ -304,7 +307,7 @@ export function collectStepBindingIds(binding: Binding): string[];
 export function computeStepDependencies(step: Step): string[];
 
 // src/engine/bindings.ts
-import type { Binding } from "../ir/index.js";
+import type { Binding } from "../workflow-spec/index.js";
 export interface BindingContext {
   input: Record<string, unknown>;
   /** Already-resolved outputs of this step's dependencies only - the
@@ -321,7 +324,7 @@ export interface BindingContext {
 export function resolveBinding(binding: Binding, ctx: BindingContext): unknown;
 
 // src/engine/interpreter.ts
-import type { WorkflowSpec } from "../ir/index.js";
+import type { WorkflowSpec } from "../workflow-spec/index.js";
 export type StepDispatcher = (params: {
   service: string;
   function: string;
@@ -396,15 +399,16 @@ const result = await withTransaction(pool, (repos) => getRunResult(repos, run));
 
 ### Sequencing rationale
 
-- **Why now:** this is the first package that composes `ir/` (0004) with
-  `core/`+`engine/` (0001/0002/0005) - every prior package built one
-  isolated piece of the D6 four-way consolidation story or the IR schema
-  in isolation; nothing yet actually runs an IR document. Spike 1.5
+- **Why now:** this is the first package that composes `workflow-spec/`
+  (0004) with `core/`+`engine/` (0001/0002/0005) - every prior package
+  built one isolated piece of the D6 four-way consolidation story or the
+  execution-plan schema in isolation; nothing yet actually runs an
+  execution-plan document. Spike 1.5
   already proved the pattern works on this exact stack (the same
   `executions`/`checkpoints`/`claim_execution()` primitive), so this
   package is "promote spike 1.5 into current conventions," the same
   relationship every prior package had to its own spike.
-- **What it depends on:** `ir/`'s `WorkflowSpec`/`Node`/`Binding` types and
+- **What it depends on:** `workflow-spec/`'s `WorkflowSpec`/`Node`/`Binding` types and
   `Step`/`StepBinding`/`RequestBinding`/`LiteralBinding` specifically (0004,
   already built); `core/`'s `withTransaction`/`CoreRepos` shape and
   `executions`/`checkpoints` tables (0001, already built);
@@ -478,7 +482,7 @@ node ids only per D8c), `executions.status`'s CHECK widened to add
 constraint added once `workflow_runs` exists (mirroring 0002's own
 `ADD COLUMN IF NOT EXISTS`/drop-and-re-add-constraint idempotency
 pattern). `core/domain/{workflow-run,run-node-output}.ts` (`spec`/`input`/
-`output` typed `unknown` - `core/` does not depend on `ir/`, per ADR-0007)
+`output` typed `unknown` - `core/` does not depend on `workflow-spec/`, per ADR-0007)
 + `rows.ts`/`mappers.ts` extensions; `Execution` gained `runId`.
 `core/repositories/{workflow-runs,run-node-outputs}.repository.ts` +
 their `queries/*.queries.ts` files, plus `executions.repository.ts`'s new
@@ -569,8 +573,8 @@ Compared against the agreed plan (Phase 1) and agreed test design
   binding-resolution logic leaked into `core/`); `engine/` owns all
   decision-shaped logic and never opens its own connection. `core/domain/
   workflow-run.ts`'s `spec: unknown` (cast, not validated, by `engine/`)
-  keeps `core/` from depending on `ir/`, per ADR-0007's dependency
-  direction - verified by inspection, no `ir/` import anywhere under
+  keeps `core/` from depending on `workflow-spec/`, per ADR-0007's dependency
+  direction - verified by inspection, no `workflow-spec/` import anywhere under
   `src/core/`.
 - No SQL injection risk (every query is parameterized); every repository
   method that can fail to return a row throws a structured `FatalError`
@@ -604,8 +608,8 @@ within this package's own agreed scope, no plan/test-design change):
   this codebase. Verified with a new test using two genuinely overlapping
   transactions (`test/engine/interpreter.test.ts`'s diamond-dependency
   test) that would hang/fail without the lock.
-- **Duplicate top-level node ids were not rejected** - neither the IR
-  JSON Schema nor `executions` enforces uniqueness, so a duplicate id let
+- **Duplicate top-level node ids were not rejected** - neither the
+  workflow-spec/execution-plan JSON Schema nor `executions` enforces uniqueness, so a duplicate id let
   a run be marked `done` as soon as one of the two same-id executions
   completed, while the other kept running against an already-"done" run.
   Fixed by rejecting a repeated id in `assertPlainSteps` (new

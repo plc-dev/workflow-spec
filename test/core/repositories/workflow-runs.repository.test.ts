@@ -21,11 +21,14 @@ describe("WorkflowRunsRepo", () => {
 
   it("creates a run defaulting to status 'running' and returns it via findById", async () => {
     const created = await withTransaction(tp.pool, (repos) =>
-      repos.workflowRuns.create({ spec: { irVersion: 1, name: "n", steps: [] }, input: { a: 1 } }),
+      repos.workflowRuns.create({
+        spec: { workflowSpecVersion: 1, name: "n", steps: [] },
+        input: { a: 1 },
+      }),
     );
     expect(created.status).toBe("running");
     expect(created.sessionId).toBeNull();
-    expect(created.spec).toEqual({ irVersion: 1, name: "n", steps: [] });
+    expect(created.spec).toEqual({ workflowSpecVersion: 1, name: "n", steps: [] });
     expect(created.input).toEqual({ a: 1 });
 
     const found = await withTransaction(tp.pool, (repos) =>

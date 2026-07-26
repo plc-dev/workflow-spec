@@ -42,7 +42,7 @@ step.
 other registered services remain governed entirely by D9b/D9c's existing
 `nesting_declaration.via` model and the calling DSL step's own binding
 (the user's `{ nested: http, ... }` shape) - this ADR does not touch that
-axis at all, and no new IR construct is introduced for it.
+axis at all, and no new execution plan construct is introduced for it.
 
 ```
    OUTER (this ADR)                    INNER (D9b/D9c, unchanged)

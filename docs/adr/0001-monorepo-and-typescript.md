@@ -8,11 +8,12 @@ Proposed (revised - see "Revision note" below)
 
 `openspec/changes/workflow-execution-platform/design.md` (D8) splits the
 workflow DSL into an authoring surface and a stable intermediate
-representation (IR), and D11 makes that IR a versioned, migrated document
-consumed by the scheduler and the execution engine alike. The IR is a *type
-contract* shared across every plane of the system (authoring, control-plane
-storage, scheduling, execution) - that fact motivates a single language and
-type system, independent of how the source tree is physically divided.
+representation, the execution plan, and D11 makes the underlying
+workflow-spec a versioned, migrated document consumed by the scheduler and
+the execution engine alike. The execution plan is a *type contract* shared
+across every plane of the system (authoring, control-plane storage,
+scheduling, execution) - that fact motivates a single language and type
+system, independent of how the source tree is physically divided.
 
 Three real components existed prior to this ADR series, each in plain
 JavaScript: a JSON Schema for the DSL authoring surface (`archive/dsl/`), a
@@ -43,7 +44,7 @@ trade, especially since nothing in this system is published externally.
 1. The repository is a **single Node/TypeScript package**: one
    `package.json`, one `tsconfig.json`, one `node_modules`, one lockfile.
    Source is organized into directories mirroring the module inventory in
-   ADR-0007 (`src/ir/`, `src/core/`, `src/engine/`, `src/scheduler/`,
+   ADR-0007 (`src/workflow-spec/`, `src/core/`, `src/engine/`, `src/scheduler/`,
    `src/session/`, `src/dataset-catalog/`, `src/secrets/`, `src/nesting/`,
    `src/item-pool/`, `src/identity/`, `src/registry/`,
    `src/workflow-store/`, `src/dsl-compiler/`).
@@ -57,10 +58,10 @@ trade, especially since nothing in this system is published externally.
    PID 1 in every pooled pod (static-binary footprint matters when
    multiplied across the fleet), not a general polyglot policy. No other
    component gets this exception without an equally specific justification.
-4. **The JSON Schema for the IR remains the canonical wire contract** (see
-   ADR-0003). TypeScript types for the IR are derived from or validated
-   against that schema, never maintained as an independent, parallel source
-   of truth.
+4. **The JSON Schema for the workflow-spec/execution-plan remains the
+   canonical wire contract** (see ADR-0003). TypeScript types for it are
+   derived from or validated against that schema, never maintained as an
+   independent, parallel source of truth.
 5. **The three real archived components are promoted by rewrite, not by
    copy** - their logic and, where real, their test coverage are the
    reference implementation, but the promoted code is written fresh as
@@ -98,8 +99,8 @@ trade, especially since nothing in this system is published externally.
   boundary the design already treats as provisional, at the cost of real
   workspace-management overhead for every other package.
 - **Keep the existing plain-JS spike layout and grow it in place.** Rejected:
-  would leave the IR contract (the single most shared interface in the
-  system, per D8/D11) informally typed at exactly the seam where type
+  would leave the execution-plan contract (the single most shared interface
+  in the system, per D8/D11) informally typed at exactly the seam where type
   safety matters most.
 - **Full polyglot (e.g. a different language per plane).** Rejected: no
   concrete requirement forces a second language anywhere except the

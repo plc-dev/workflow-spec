@@ -10,7 +10,7 @@ ADR-0001 committed to a single TypeScript package plus a narrow Go
 exception (the ADR-0008 exec-agent), and ADR-0007 laid out the resulting
 module inventory. Neither fixed the runtime version, module format, build
 tooling, lint/format tool, test runner, the database access layer, or how
-non-IR runtime shapes (env config, RPC payloads) get validated. This ADR
+non-workflow-spec runtime shapes (env config, RPC payloads) get validated. This ADR
 closes those gaps - the code-authoring and build-time half of the tooling
 decision space; ADR-0010 covers the operational half (CI, dependency/secret
 hygiene, local dev environment).
@@ -77,11 +77,11 @@ adopted only once a live deployed environment holds data that a schema
 change would need to preserve - deciding the concrete tool now, before that
 need is concrete, would be speculative.
 
-**Non-IR runtime validation: zod.** `ir/` remains on JSON Schema/ajv
-(ADR-0003 - that is the system's canonical wire contract and stays
-schema-authored-first). Everything else that is TS-authored-first - env
-config, the ADR-0008 `Invoke`/`Evict` RPC payloads - uses zod instead, for
-ergonomics, not as a second, competing IR contract.
+**Non-workflow-spec runtime validation: zod.** `workflow-spec/` remains
+on JSON Schema/ajv (ADR-0003 - that is the system's canonical wire contract
+and stays schema-authored-first). Everything else that is TS-authored-first
+- env config, the ADR-0008 `Invoke`/`Evict` RPC payloads - uses zod instead,
+for ergonomics, not as a second, competing workflow-spec contract.
 
 **Config loading: one `src/shared/config.ts`.** A zod schema over
 `process.env`, parsed once at each app's startup; fails closed (a startup

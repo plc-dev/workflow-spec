@@ -1,7 +1,8 @@
 // Named stand-ins for types that will eventually live in the future pure
 // modules `logic/` (D10's JSON-Logic evaluator) and `urn/` (D8a/D13's URN
-// parser) - neither module exists yet (ADR-0003: `ir/` "MAY depend on"
-// them, not "MUST"). Each alias is currently just `unknown`/`string`; the
+// parser) - neither module exists yet (ADR-0003: `workflow-spec/` "MAY
+// depend on" them, not "MUST"). Each alias is currently just
+// `unknown`/`string`; the
 // indirection means tightening these later (once `logic/`/`urn/` land) is
 // a one-line change to the alias itself, not a hunt through every
 // interface that references it.
