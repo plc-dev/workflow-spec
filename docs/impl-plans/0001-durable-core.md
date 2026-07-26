@@ -376,6 +376,25 @@ structure - applied directly rather than re-running Phase 1/2):
 All 21 tests (16 original + 5 new) pass after this refactor; `tsc --noEmit`
 and `biome check .` both clean.
 
+**Post-review documentation follow-up** (also requested after `reviewed`;
+no code/scope/test-design change):
+
+- **`.example.env`** added at the repo root, documenting the one env var
+  `src/config.ts` currently reads (`LOG_LEVEL`, optional, default
+  `"info"`) plus a note on the Postgres connection vars that
+  `docker-compose.dev.yml` stands up but no app yet consumes via
+  `config.ts` (deferred until `apps/worker` exists, per the same
+  build-for-the-need-in-front-of-you posture as everything else in this
+  package).
+- **`docs/impl-plans/implementation-best-practices.md`** added: a
+  codification (not a new decision) of what this package's own review and
+  refactor already required - env vars only via `config.ts`, no inlined
+  raw SQL in `src/`, no magic numbers/strings, structured errors via
+  `errors.ts`, `.example.env` kept in sync. Explicitly closed except by
+  the repo owner's own explicit instruction; wired into
+  `.kilo/command/impl-package.md`'s Phase 3 so every future work package
+  follows it.
+
 All 8 planned test cases (TC-1 through TC-8) are implemented and passing:
 
 - TC-1: `test/core/schema.test.ts` (4 tests)

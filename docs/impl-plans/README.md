@@ -15,6 +15,13 @@ suitable for feeding into a PR description by hand later.
 Produced and driven by the `/impl-package` command (see
 `.kilo/command/impl-package.md`).
 
+**`implementation-best-practices.md`** in this directory is a binding set
+of coding conventions every work package's Phase 3 (Implement) must follow
+(env vars only via `src/config.ts`, no inlined raw SQL, no magic
+numbers/strings, structured errors via `src/errors.ts`, `.example.env`
+kept in sync). It is closed except by the repo owner's explicit
+instruction - `/impl-package` must not extend it on its own.
+
 ## Naming
 
 `NNNN-<slug>.md`, numbered sequentially in creation order (mirrors

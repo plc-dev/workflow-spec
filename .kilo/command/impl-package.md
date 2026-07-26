@@ -77,6 +77,14 @@ ground or contradicting an already-agreed plan.
 
 ## Phase 3 - IMPLEMENT
 
+0. Read `docs/impl-plans/implementation-best-practices.md` and follow every
+   practice in it (env vars only via `src/config.ts`, no inlined raw SQL
+   strings, no magic numbers/strings, structured errors via
+   `src/errors.ts`, `.example.env` kept in sync) for any code this phase
+   writes. That document is closed except by the repo owner's explicit
+   instruction - do not add to it, remove from it, or reinterpret it on
+   your own initiative, even if a new situation seems to call for it;
+   flag the gap to the user instead.
 1. Implement exactly what was agreed in Phase 1. If reality forces a
    deviation, stop and flag it rather than silently diverging - small
    deviations can be noted in the doc's implementation-notes section as you
