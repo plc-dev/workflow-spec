@@ -9,10 +9,14 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
+    "check": "biome check .",
+    "fix": "biome check --write .",
+    "format": "biome format --write ./src",
+    "lint": "biome lint ./src",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage --silent",
+    "prepare": "git config --local core.hooksPath .git_hooks || echo \"Git not found or not a repository, skipping...\""
   },
   "dependencies": {
     "ajv": "^8.20.0",
