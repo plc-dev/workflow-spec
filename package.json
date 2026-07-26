@@ -1,0 +1,30 @@
+{
+  "name": "wfx",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Workflow execution platform - single Node/TypeScript package (ADR-0001).",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "pg": "^8.13.1",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@testcontainers/postgresql": "^10.16.0",
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "testcontainers": "^10.16.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,23 @@
+# Persistent local development stack (ADR-0010). Distinct in purpose from
+# testcontainers (ADR-0009), which is test-scoped and ephemeral per test run.
+#
+# Scoped down to `postgres` only for now - `openbao` (secrets, task 1.6) and
+# `minio` (dataset bytes, D8b) have no consumer yet in this repo; add them
+# when the packages that actually need them (secrets/, dataset-catalog/)
+# land, per ADR-0010's own service list.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wfx
+      POSTGRES_PASSWORD: wfx
+      POSTGRES_DB: core
+    ports:
+      - "5432:5432"
+    volumes:
+      - wfx-postgres-data:/var/lib/postgresql/data
+      - ./src/core/schema.sql:/docker-entrypoint-initdb.d/01-core-schema.sql:ro
+
+volumes:
+  wfx-postgres-data:

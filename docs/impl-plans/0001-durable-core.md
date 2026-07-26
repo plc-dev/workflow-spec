@@ -2,7 +2,7 @@
 
 ## Status
 
-`draft`
+`reviewed`
 
 ## Scope
 
@@ -179,6 +179,7 @@ export interface CheckpointsRepo {
 export interface CoreRepos {
   executions: ExecutionsRepo;
   checkpoints: CheckpointsRepo;
+  client: PoolClient; // raw transaction client, for a caller with no typed repo yet - see implementation notes
 }
 export function withTransaction<T>(
   pool: Pool,
@@ -285,8 +286,91 @@ of its own.
 
 ## Implementation notes
 
-_(pending Phase 3)_
+Built as planned, with one deliberate addition and one naming change made
+during implementation (both small enough to note here rather than go back
+for re-agreement, per the plan's own allowance):
+
+- **`docker-compose.dev.yml`, not `docker-compose.yml`** - renamed before
+  implementation started, per review feedback, to make the file's scope
+  (persistent interactive dev, vs. testcontainers' ephemeral per-test
+  stack) explicit from the filename alone.
+- **`src/logger.ts` added to scaffolding** - per review feedback,
+  confirmed ADR-0009 already decided the general application-logging
+  product (`pino` + a shared `redact` config); this package just stands up
+  the shared instance since no file owned it yet. Used minimally (a
+  debug-level log line on `claimExecution`/`completeExecution`). Unrelated
+  to `session_log` (D3), which remains out of scope here.
+- **`CoreRepos.client: PoolClient` added** (not in the original plan's
+  interface sketch) - needed to actually exercise TC-4's crash test
+  (getting the transaction's own backend PID to `pg_terminate_backend` it)
+  and TC-7's composability test (a third, ad hoc write standing in for a
+  future `session/`/`scheduler/` write). This is a small, in-spirit
+  extension of ADR-0002's "operate within a transaction handed to them" -
+  it means a future consumer isn't blocked on a typed repo existing for
+  its own concern before it can share this transaction. Typed repos remain
+  the preferred surface; `client` is the escape hatch ADR-0002's
+  composability claim actually requires to be testable/usable today.
+
+Everything else matches the plan: `src/core/schema.sql` (executions,
+checkpoints, `claim_execution()`, ported from spike 1.2, `public` schema
+instead of the `spike` schema, `session_log`/`session_pointer`/`placement`
+excluded), `src/core/{db,tx,types,repositories/*}.ts`,
+`src/engine/index.ts` (`claimExecution`/`completeExecution` as two
+composable primitives), and base scaffolding (`package.json`,
+`tsconfig.json` per ADR-0009's exact compiler-option list, `biome.json`
+with `archive/**` excluded since that tree is preserved-as-reference, not
+maintained code, `vitest.config.ts` with extended timeouts for
+testcontainers' image pull/start).
+
+- **`claim_execution()` pins `search_path`** - the local code review pass
+  after implementation caught that `core/schema.sql`'s port of this
+  function dropped the reference implementation's `SET search_path = ...`
+  pinning (spike 1.2 had `SET search_path = spike, pg_catalog`). Restored
+  as `SET search_path = public, pg_catalog` for the same defense-in-depth
+  reason Postgres documents for functions with unqualified object
+  references - not a behavior change, all 16 tests still pass.
+
+All 8 planned test cases (TC-1 through TC-8) are implemented and passing:
+
+- TC-1: `test/core/schema.test.ts` (4 tests)
+- TC-2, TC-3: `test/core/executions.test.ts` (2 tests)
+- TC-4, TC-5 (engine level), TC-7 (both commit and crash-rollback shapes):
+  `test/engine/claim-complete.test.ts` (5 tests)
+- TC-5 (repo level): `test/core/checkpoints.test.ts` (1 test)
+- TC-6: `test/core/tx.test.ts` (2 tests)
+- TC-8: `test/logger.test.ts` (2 tests)
+
+`npx tsc --noEmit`, `npx biome check .`, and `npx vitest run` all pass
+clean (16/16 tests, 6/6 files) as of this writing - verified directly, not
+assumed.
+
+No follow-up tasks spun off beyond the already-planned 6.1b split (see
+Scope).
 
 ## Review notes
 
-_(pending Phase 4)_
+Compared against the agreed plan (Phase 1) and agreed test design
+(Phase 2), not a fresh read of the code in a vacuum:
+
+- Every Scope item (6.1a) is present: `core/schema.sql`,
+  `core/{db,tx,types,repositories/*}.ts`, `engine/index.ts`, plus the base
+  scaffolding and `logger.ts` this package had to stand up since nothing
+  else claimed them.
+- All 8 agreed test cases (TC-1 through TC-8) exist and pass -
+  cross-checked against the Test design table's file/property mapping, not
+  just "tests exist somewhere." Re-ran `npx tsc --noEmit`, `npx biome
+  check .`, and `npx vitest run` immediately before writing this section:
+  clean typecheck, clean lint, 16/16 tests passing across 6 files.
+- Both deviations from the original interface sketch (`CoreRepos.client`)
+  and both mid-flight changes requested by the user
+  (`docker-compose.dev.yml` naming, `src/logger.ts`) are recorded in
+  Implementation notes with rationale - none were made silently.
+- `tasks.md` accurately reflects reality: 6.1 marked `[x]` with a pointer
+  to this doc and the split; 6.1a `[x]` with pointers to the real
+  files/tests (not just this doc); 6.1b left `[ ]`, correctly scoped to
+  exactly what 6.1a deliberately excluded (durable sleep, LISTEN/NOTIFY).
+- No scope creep found in the other direction either: `session_log`/
+  `session_pointer`/`placement` were not touched, consistent with the plan.
+
+No follow-up issues found. Package considered complete for its stated
+scope.

@@ -48,6 +48,6 @@ Each plan document carries:
 
 | # | Package | Status | Scope (tasks.md) |
 |---|---|---|---|
-| 0001 | Durable core: `core/` schema + `engine/` claim/complete primitives | draft | 6.1a (split from 6.1) |
+| 0001 | Durable core: `core/` schema + `engine/` claim/complete primitives | reviewed | 6.1a (split from 6.1) |
 </content>
 </invoke>
