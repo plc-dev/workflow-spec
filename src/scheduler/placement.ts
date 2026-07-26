@@ -95,7 +95,21 @@ export async function recordAccess(
 
   const placement = await repos.placement.upsertAccess({ contentHash, at, ...upsertFields });
   await repos.placementAccess.record(contentHash, at);
-  await repos.placementAccess.pruneOlderThan(contentHash, config.promotion.frequencyWindowMs);
+  // Local-review fix: SQL_PRUNE_PLACEMENT_ACCESS_OLDER_THAN's own comment
+  // says it's "called with the widest configured window as the horizon",
+  // but this previously pruned using ONLY promotion.frequencyWindowMs.
+  // evaluatePromotion's windowed count and this prune call can each be
+  // given a DIFFERENT loaded PlacementConfig by their respective callers
+  // (both default independently to DEFAULT_PLACEMENT_CONFIG otherwise) -
+  // if promotion's window is ever wider than what was used here to
+  // prune, the rows the frequency count needs would already be deleted.
+  // Pruning by the wider of the two known windows on this config removes
+  // that gap regardless of which config a given caller happens to pass.
+  const pruneHorizonMs = Math.max(
+    config.promotion.frequencyWindowMs,
+    config.demotion.idleThresholdMs,
+  );
+  await repos.placementAccess.pruneOlderThan(contentHash, pruneHorizonMs);
 
   logger.debug({ contentHash }, LOG_EVENT_RECORD_ACCESS);
   return placement;
@@ -283,6 +297,15 @@ export async function evictLRUIfOverCapacity(
   for (const placement of pinned) {
     if (total <= budget) {
       break;
+    }
+    // Local-review fix: a placement with no recorded size (sizeBytes <= 0
+    // - the column's own default) cannot reduce `total` by being
+    // demoted, so demoting it was pure churn - and, at the extreme,
+    // could mass-demote every pinned entry in the set (oldest-first)
+    // while making zero progress toward the budget if size tracking
+    // hasn't caught up yet for any of them.
+    if (placement.sizeBytes <= 0) {
+      continue;
     }
     await demote(repos, placement.contentHash);
     total -= placement.sizeBytes;

@@ -7,13 +7,17 @@ import type {
   ExecutionRow,
   PlacementConfigRow,
   PlacementRow,
+  RunNodeOutputRow,
   SessionLogEntryRow,
   SessionPointerRow,
   WaitRow,
+  WorkflowRunRow,
 } from "./rows.js";
+import type { RunNodeOutput } from "./run-node-output.js";
 import type { SessionLogEntry } from "./session-log-entry.js";
 import type { SessionPointer } from "./session-pointer.js";
 import type { Wait } from "./wait.js";
+import type { WorkflowRun } from "./workflow-run.js";
 
 export function mapExecutionRow(row: ExecutionRow): Execution {
   return {
@@ -27,6 +31,7 @@ export function mapExecutionRow(row: ExecutionRow): Execution {
     attempts: row.attempts,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    runId: row.run_id === null ? null : Number(row.run_id),
   };
 }
 
@@ -95,4 +100,25 @@ export function mapPlacementRow(row: PlacementRow): Placement {
 // case).
 export function mapPlacementConfigRow(row: PlacementConfigRow): PlacementConfig {
   return row.config as PlacementConfig;
+}
+
+export function mapWorkflowRunRow(row: WorkflowRunRow): WorkflowRun {
+  return {
+    id: Number(row.id),
+    sessionId: row.session_id,
+    spec: row.spec,
+    input: row.input,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function mapRunNodeOutputRow(row: RunNodeOutputRow): RunNodeOutput {
+  return {
+    runId: Number(row.run_id),
+    nodeId: row.node_id,
+    output: row.output,
+    completedAt: row.completed_at,
+  };
 }

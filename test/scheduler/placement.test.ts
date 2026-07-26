@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../src/core/index.js";
 import {
+  DEFAULT_PLACEMENT_CONFIG,
   demote,
   effectiveRehydrationCostMs,
   evaluateDemotion,
@@ -274,5 +275,15 @@ describe("scheduler/placement", () => {
       "SELECT 1 FROM executions WHERE session_id = 's2'",
     );
     expect(rolledBackExecs).toHaveLength(0);
+  });
+
+  // Local-review fix (docs/impl-plans/0006-interpreter-plain-steps.md's
+  // review pass): DEFAULT_PLACEMENT_CONFIG is hand-duplicated from
+  // core/database/schema.sql's seeded 'default' placement_config row -
+  // pins the two together so a future edit to one without the other
+  // fails a test instead of silently drifting.
+  it("DEFAULT_PLACEMENT_CONFIG matches the seeded 'default' placement_config row", async () => {
+    const loaded = await withTransaction(tp.pool, (repos) => repos.placementConfig.load("default"));
+    expect(loaded).toEqual(DEFAULT_PLACEMENT_CONFIG);
   });
 });

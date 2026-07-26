@@ -20,6 +20,15 @@ export const ERROR_IDS = {
   CORE_PLACEMENT_UPSERT_NO_ROW_RETURNED: "core.placement.upsert_no_row_returned",
   CORE_PLACEMENT_SET_PINNED_NOT_FOUND: "core.placement.set_pinned_not_found",
   SESSION_REWIND_TARGET_OUT_OF_RANGE: "session.rewind.target_out_of_range",
+  CORE_WORKFLOW_RUN_NO_ROW_RETURNED: "core.workflow_runs.no_row_returned",
+  CORE_WORKFLOW_RUN_NOT_FOUND: "core.workflow_runs.not_found",
+  CORE_RUN_NODE_OUTPUT_NO_ROW_RETURNED: "core.run_node_outputs.insert_no_row_returned",
+  ENGINE_UNSUPPORTED_NODE_KIND: "engine.interpreter.unsupported_node_kind",
+  ENGINE_DUPLICATE_NODE_ID: "engine.interpreter.duplicate_node_id",
+  ENGINE_RUN_NOT_FOUND: "engine.interpreter.run_not_found",
+  ENGINE_NODE_NOT_FOUND: "engine.interpreter.node_not_found",
+  ENGINE_BINDING_KIND_NOT_SUPPORTED: "engine.bindings.kind_not_supported",
+  ENGINE_NODE_OUTPUT_MISSING: "engine.bindings.step_output_missing",
 } as const;
 
 export type ErrorId = (typeof ERROR_IDS)[keyof typeof ERROR_IDS];
@@ -44,6 +53,22 @@ export const DEFAULT_ERROR_MESSAGES: Record<ErrorId, string> = {
     "Setting a placement's pinned residency found no existing row for that content hash.",
   [ERROR_IDS.SESSION_REWIND_TARGET_OUT_OF_RANGE]:
     "A session rewind's target sequence is negative or ahead of the session's current sequence.",
+  [ERROR_IDS.CORE_WORKFLOW_RUN_NO_ROW_RETURNED]:
+    "Creating or updating a workflow run did not return a row.",
+  [ERROR_IDS.CORE_WORKFLOW_RUN_NOT_FOUND]: "No workflow run exists for the given id.",
+  [ERROR_IDS.CORE_RUN_NODE_OUTPUT_NO_ROW_RETURNED]:
+    "Recording a run node output did not return the inserted row.",
+  [ERROR_IDS.ENGINE_UNSUPPORTED_NODE_KIND]:
+    "submitRun only supports plain Step nodes (no kind) - branch/map nodes are task 6.2b, not yet implemented.",
+  [ERROR_IDS.ENGINE_DUPLICATE_NODE_ID]:
+    "A workflow spec's top-level steps must have unique ids - a repeated id was found.",
+  [ERROR_IDS.ENGINE_RUN_NOT_FOUND]: "No workflow run exists for the given id.",
+  [ERROR_IDS.ENGINE_NODE_NOT_FOUND]:
+    "No node with the given id exists in this run's workflow spec.",
+  [ERROR_IDS.ENGINE_BINDING_KIND_NOT_SUPPORTED]:
+    "This binding kind is not yet resolvable by the plain-step interpreter (task 6.2b, not yet implemented).",
+  [ERROR_IDS.ENGINE_NODE_OUTPUT_MISSING]:
+    "A step binding referenced a dependency's output that has not been recorded yet.",
 };
 
 export interface PlatformErrorOptions {

@@ -17,6 +17,10 @@ import {
 } from "../repositories/placement-config.repository.js";
 import { type PlacementRepo, createPlacementRepo } from "../repositories/placement.repository.js";
 import {
+  type RunNodeOutputsRepo,
+  createRunNodeOutputsRepo,
+} from "../repositories/run-node-outputs.repository.js";
+import {
   type SessionLogRepo,
   createSessionLogRepo,
 } from "../repositories/session-log.repository.js";
@@ -25,6 +29,10 @@ import {
   createSessionPointerRepo,
 } from "../repositories/session-pointer.repository.js";
 import { type WaitsRepo, createWaitsRepo } from "../repositories/waits.repository.js";
+import {
+  type WorkflowRunsRepo,
+  createWorkflowRunsRepo,
+} from "../repositories/workflow-runs.repository.js";
 
 // ADR-0002: `core/` exposes `withTransaction(fn) -> repos`. Higher-level
 // concerns (engine/, and later session/, scheduler/, dataset-catalog/)
@@ -48,6 +56,9 @@ export interface CoreRepos {
   placement: PlacementRepo;
   placementConfig: PlacementConfigRepo;
   placementAccess: PlacementAccessRepo;
+  // Task 6.2a (docs/impl-plans/0006-interpreter-plain-steps.md).
+  workflowRuns: WorkflowRunsRepo;
+  runNodeOutputs: RunNodeOutputsRepo;
   // The raw transaction client itself, for a caller that needs to issue
   // its own query on the SAME transaction before a typed repo exists for
   // it yet (e.g. a future scheduler/dataset-catalog write, or - in this
@@ -81,6 +92,8 @@ export async function withTransaction<T>(
       placement: createPlacementRepo(client),
       placementConfig: createPlacementConfigRepo(client),
       placementAccess: createPlacementAccessRepo(client),
+      workflowRuns: createWorkflowRunsRepo(client),
+      runNodeOutputs: createRunNodeOutputsRepo(client),
       client,
     };
     const result = await fn(repos);

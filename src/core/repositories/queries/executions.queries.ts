@@ -33,3 +33,25 @@ export const SQL_MARK_EXECUTION_WAITING = `
   SET status = 'waiting', updated_at = now()
   WHERE id = $1
 `;
+
+// Task 6.2a (docs/impl-plans/0006-interpreter-plain-steps.md): inserts one
+// execution row for a workflow run's top-level node, with an explicit
+// caller-decided status ('blocked' if the node has unmet dependencies at
+// submission time, 'queued' otherwise) rather than SQL_ENQUEUE_EXECUTION's
+// always-'queued' DEFAULT. Reuses the `step` column as the node id (see
+// schema.sql's own comment on executions.run_id).
+export const SQL_ENQUEUE_EXECUTION_FOR_RUN = `
+  INSERT INTO executions (session_id, run_id, step, input, status)
+  VALUES ($1, $2, $3, $4, $5)
+  RETURNING *
+`;
+
+// Idempotent no-op if the row is already past 'blocked' (queued/running/
+// done/failed) - promoteReadyNodes may legitimately re-check and
+// re-attempt this for a node whose dependencies were already satisfied
+// by an earlier sibling completion.
+export const SQL_PROMOTE_BLOCKED_TO_QUEUED = `
+  UPDATE executions
+  SET status = 'queued', updated_at = now()
+  WHERE run_id = $1 AND step = $2 AND status = 'blocked'
+`;

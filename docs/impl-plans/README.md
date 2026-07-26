@@ -63,5 +63,6 @@ Each plan document carries:
 | 0003 | Session log: `session_log`/`session_pointer` tables + `session/` module (append, rewind, replay) | reviewed | 3.1, 3.10 |
 | 0004 | IR schema: `ir/` module (types, JSON Schema, `validate()`) | reviewed | 5.1 |
 | 0005 | Placement: `core/`'s placement schema + `scheduler/`'s decision logic | reviewed | 4.1a (new, split from 1.10/4.1-4.7) |
+| 0006 | Execution interpreter: plain-step dependency-graph execution | reviewed | 6.2a (new, split from 6.2) |
 </content>
 </invoke>

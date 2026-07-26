@@ -14,6 +14,7 @@ export interface ExecutionRow {
   attempts: number;
   created_at: Date;
   updated_at: Date;
+  run_id: string | null; // BIGINT comes back as a string from `pg` by default
 }
 
 export interface CheckpointRow {
@@ -68,4 +69,21 @@ export interface PlacementConfigRow {
   name: string;
   config: unknown; // JSONB - narrowed to PlacementConfig by mapPlacementConfigRow
   updated_at: Date;
+}
+
+export interface WorkflowRunRow {
+  id: string; // BIGSERIAL comes back as a string from `pg` by default
+  session_id: string | null;
+  spec: unknown; // JSONB - opaque to core/, cast (not validated) by engine/
+  input: unknown;
+  status: "running" | "done" | "failed";
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface RunNodeOutputRow {
+  run_id: string; // BIGINT comes back as a string from `pg` by default
+  node_id: string;
+  output: unknown;
+  completed_at: Date;
 }

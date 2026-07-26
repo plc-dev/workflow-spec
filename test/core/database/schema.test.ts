@@ -134,6 +134,65 @@ describe("core/schema.sql", () => {
     expect(result.rows).toHaveLength(1);
   });
 
+  // TC-1 (docs/impl-plans/0006-interpreter-plain-steps.md): task 6.2a's
+  // new tables and executions' widened status CHECK/new run_id column.
+  it("creates workflow_runs and run_node_outputs tables", async () => {
+    const result = await tp.pool.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name IN ('workflow_runs', 'run_node_outputs')
+       ORDER BY table_name`,
+    );
+    expect(result.rows.map((r) => r.table_name)).toEqual(["run_node_outputs", "workflow_runs"]);
+  });
+
+  it("accepts 'blocked' as an executions.status value", async () => {
+    await expect(
+      tp.pool.query(
+        `INSERT INTO executions (session_id, step, status) VALUES ('s', 'step', 'blocked')`,
+      ),
+    ).resolves.not.toThrow();
+  });
+
+  it("has a nullable executions.run_id column referencing workflow_runs", async () => {
+    const {
+      rows: [run],
+    } = await tp.pool.query<{ id: string }>(
+      `INSERT INTO workflow_runs (spec, input) VALUES ('{}', '{}') RETURNING id`,
+    );
+    await expect(
+      tp.pool.query(`INSERT INTO executions (session_id, step, run_id) VALUES ('s', 'n1', $1)`, [
+        run?.id,
+      ]),
+    ).resolves.not.toThrow();
+    await expect(
+      tp.pool.query(`INSERT INTO executions (session_id, step, run_id) VALUES ('s', 'n2', 999999)`),
+    ).rejects.toThrow(/violates foreign key constraint/);
+  });
+
+  it("enforces UNIQUE(run_id, node_id) on run_node_outputs", async () => {
+    const {
+      rows: [run],
+    } = await tp.pool.query<{ id: string }>(
+      `INSERT INTO workflow_runs (spec, input) VALUES ('{}', '{}') RETURNING id`,
+    );
+    await tp.pool.query(
+      `INSERT INTO run_node_outputs (run_id, node_id, output) VALUES ($1, 'a', '{}')`,
+      [run?.id],
+    );
+    await expect(
+      tp.pool.query(
+        `INSERT INTO run_node_outputs (run_id, node_id, output) VALUES ($1, 'a', '{}')`,
+        [run?.id],
+      ),
+    ).rejects.toThrow(/duplicate key value violates unique constraint/);
+  });
+
+  it("enforces the workflow_runs.status CHECK constraint", async () => {
+    await expect(
+      tp.pool.query(`INSERT INTO workflow_runs (spec, input, status) VALUES ('{}', '{}', 'bogus')`),
+    ).rejects.toThrow(/violates check constraint/);
+  });
+
   // TC-1 (docs/impl-plans/0003-session-log.md): enforces UNIQUE(session_id,
   // sequence) on session_log.
   it("enforces UNIQUE(session_id, sequence) on session_log", async () => {

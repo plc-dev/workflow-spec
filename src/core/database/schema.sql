@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS executions (
     step          TEXT NOT NULL,
     input         JSONB NOT NULL DEFAULT '{}',
     status        TEXT NOT NULL DEFAULT 'queued'
-                    CHECK (status IN ('queued', 'running', 'waiting', 'done', 'failed')),
+                    CHECK (status IN ('blocked', 'queued', 'running', 'waiting', 'done', 'failed')),
     worker_id     TEXT,
     lease_until   TIMESTAMPTZ,
     attempts      INT NOT NULL DEFAULT 0,
@@ -58,9 +58,23 @@ CREATE TABLE IF NOT EXISTS executions (
 -- brand-new databases.
 ALTER TABLE executions DROP CONSTRAINT IF EXISTS executions_status_check;
 ALTER TABLE executions ADD CONSTRAINT executions_status_check
-    CHECK (status IN ('queued', 'running', 'waiting', 'done', 'failed'));
+    CHECK (status IN ('blocked', 'queued', 'running', 'waiting', 'done', 'failed'));
 
 CREATE INDEX IF NOT EXISTS executions_claimable_idx ON executions (status, lease_until);
+
+-- Task 6.2a (docs/impl-plans/0006-interpreter-plain-steps.md): links an
+-- execution row to the workflow_runs row (below) it was created for, and
+-- reuses the pre-existing `step` column as that run's IR node id (a
+-- WorkflowSpec node's `id` is already a free-text label with no FK/enum
+-- constraint - exactly what `step` already was, so no second, redundant
+-- column was added). NULL for every execution NOT created by
+-- engine.submitRun (durable-sleep/session-log tests, and any future
+-- non-workflow-run use of `executions`) - added via ALTER rather than at
+-- CREATE TABLE time since `executions` may already exist in a persistent
+-- dev database (same posture as the status-CHECK widening above).
+ALTER TABLE executions ADD COLUMN IF NOT EXISTS run_id BIGINT;
+
+CREATE INDEX IF NOT EXISTS executions_run_id_idx ON executions (run_id) WHERE run_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS checkpoints (
     execution_id  BIGINT NOT NULL REFERENCES executions(id),
@@ -371,3 +385,73 @@ CREATE TABLE IF NOT EXISTS placement_access (
 
 CREATE INDEX IF NOT EXISTS placement_access_hash_time_idx
     ON placement_access (content_hash, accessed_at);
+
+-- Task 6.2a (docs/impl-plans/0006-interpreter-plain-steps.md): the
+-- generic dependency-graph interpreter for plain-`Step` workflow-specs
+-- (design.md D8), promoted from archive/spikes/1.5-ir-interpreter/'s
+-- already-proven `workflow_runs`/`run_node_outputs` pattern. `spec` is
+-- stored as `unknown` (cast, not validated, by core/domain/workflow-
+-- run.ts) rather than a typed `ir.WorkflowSpec` - `core/` does not depend
+-- on `ir/` (ADR-0007's dependency direction runs the other way); the
+-- caller (engine/) is responsible for having already run `ir.validate()`
+-- before `submitRun` is ever called.
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    id            BIGSERIAL PRIMARY KEY,
+    session_id    TEXT,
+    spec          JSONB NOT NULL,
+    input         JSONB NOT NULL DEFAULT '{}',
+    status        TEXT NOT NULL DEFAULT 'running'
+                    CHECK (status IN ('running', 'done', 'failed')),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- `executions.run_id` is added earlier in this file (alongside the rest
+-- of the `executions` table) but its FK constraint is added here instead,
+-- once `workflow_runs` actually exists.
+--
+-- Local-review fix: unlike `executions_status_check` above (a CHECK,
+-- deliberately drop-and-re-added on every apply so a WIDENING is picked
+-- up against an already-applied database), this FK's definition never
+-- changes once added - there is no widening case to re-apply for. Adding
+-- it unconditionally on every apply (as the CHECK pattern does) would
+-- mean: (1) `DROP CONSTRAINT` + a validated `ADD CONSTRAINT` takes an
+-- `ACCESS EXCLUSIVE` lock on `executions` - the hot table `claim_execution()`
+-- polls - for the duration of a full-table validation scan, on every
+-- single schema.sql apply against a database that may already hold real
+-- rows; (2) that validation cost is repaid for no reason, since the
+-- constraint's definition is static. Guarded so it is only ever added
+-- once, and via `NOT VALID` + a separate `VALIDATE CONSTRAINT` (the
+-- latter takes only `SHARE UPDATE EXCLUSIVE`, which does not block
+-- ordinary reads/writes) rather than a single validated `ADD CONSTRAINT`.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'executions_run_id_fkey'
+    ) THEN
+        ALTER TABLE executions ADD CONSTRAINT executions_run_id_fkey
+            FOREIGN KEY (run_id) REFERENCES workflow_runs(id) NOT VALID;
+        ALTER TABLE executions VALIDATE CONSTRAINT executions_run_id_fkey;
+    END IF;
+END $$;
+
+-- Per-run, per-TOP-LEVEL-node-id completed output - what `{from:"step",
+-- id}` bindings resolve against across node boundaries (spike 1.5's
+-- `run_node_outputs`). Deliberately scoped to top-level node ids only,
+-- from the start: design.md D8c's "a case's/body's internal step ids are
+-- structurally unreachable from outside that node" means a future 6.2b
+-- (branch/map) must never write an internal case/body step's output
+-- here - only a completed branch/map NODE's own `yields` result, exactly
+-- like a plain Step's output. Scoping this table that way now means
+-- 6.2b extends it as-is, no later migration needed.
+CREATE TABLE IF NOT EXISTS run_node_outputs (
+    run_id        BIGINT NOT NULL REFERENCES workflow_runs(id),
+    node_id       TEXT NOT NULL,
+    output        JSONB NOT NULL,
+    completed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Also serves this table's one lookup pattern (WHERE run_id = $1
+    -- [AND node_id = $2]) via this constraint's own index - mirrors
+    -- session_log's UNIQUE(session_id, sequence) posture of not adding a
+    -- redundant separate index over the same columns.
+    UNIQUE (run_id, node_id)
+);
