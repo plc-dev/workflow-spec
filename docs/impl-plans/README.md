@@ -59,5 +59,6 @@ Each plan document carries:
 | # | Package | Status | Scope (tasks.md) |
 |---|---|---|---|
 | 0001 | Durable core: `core/` schema + `engine/` claim/complete primitives | reviewed | 6.1a (split from 6.1) |
+| 0002 | Durable sleep: `waits` table, `signal_wait()`, LISTEN/NOTIFY `WakeListener` | draft | 6.1b |
 </content>
 </invoke>
