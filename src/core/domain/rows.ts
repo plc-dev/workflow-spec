@@ -45,3 +45,27 @@ export interface SessionPointerRow {
   current_sequence: string; // BIGINT comes back as a string from `pg` by default
   updated_at: Date;
 }
+
+export interface PlacementRow {
+  content_hash: string;
+  replica_id: string | null;
+  session_id: string | null;
+  pinned: boolean;
+  pinned_at: Date | null;
+  interactivity: "interactive" | "batch";
+  access_count: string; // BIGINT comes back as a string from `pg` by default
+  first_accessed_at: Date | null;
+  last_accessed_at: Date | null;
+  declared_cost_class: "trivial" | "cheap" | "moderate" | "expensive" | null;
+  observed_rehydration_ms: number | null;
+  observed_sample_count: number;
+  size_bytes: string; // BIGINT comes back as a string from `pg` by default
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface PlacementConfigRow {
+  name: string;
+  config: unknown; // JSONB - narrowed to PlacementConfig by mapPlacementConfigRow
+  updated_at: Date;
+}

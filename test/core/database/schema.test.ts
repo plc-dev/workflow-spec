@@ -31,6 +31,49 @@ describe("core/schema.sql", () => {
     ]);
   });
 
+  // TC-1 (docs/impl-plans/0005-placement.md): the fourth and last piece of
+  // the D6 four-way consolidation - placement, placement_config,
+  // placement_access.
+  it("creates placement, placement_config, and placement_access tables", async () => {
+    const result = await tp.pool.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name IN
+         ('placement', 'placement_config', 'placement_access')
+       ORDER BY table_name`,
+    );
+    expect(result.rows.map((r) => r.table_name)).toEqual([
+      "placement",
+      "placement_access",
+      "placement_config",
+    ]);
+  });
+
+  it("enforces placement.interactivity's CHECK constraint", async () => {
+    await expect(
+      tp.pool.query(`INSERT INTO placement (content_hash, interactivity) VALUES ('h1', 'bogus')`),
+    ).rejects.toThrow(/violates check constraint/);
+  });
+
+  it("enforces placement.declared_cost_class's CHECK constraint", async () => {
+    await expect(
+      tp.pool.query(
+        `INSERT INTO placement (content_hash, declared_cost_class) VALUES ('h2', 'bogus')`,
+      ),
+    ).rejects.toThrow(/violates check constraint/);
+  });
+
+  it("seeds a 'default' placement_config row", async () => {
+    const result = await tp.pool.query<{ config: unknown }>(
+      `SELECT config FROM placement_config WHERE name = 'default'`,
+    );
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.config).toMatchObject({
+      promotion: { frequencyThreshold: 3 },
+      demotion: { idleThresholdMs: 1_200_000 },
+      capacity: { pinnedBudgetBytes: 1_073_741_824 },
+    });
+  });
+
   it("enforces the executions.status CHECK constraint", async () => {
     await expect(
       tp.pool.query(

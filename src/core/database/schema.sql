@@ -13,9 +13,15 @@
 -- session input-history log and its rewindable pointer, owned by `core/`
 -- per ADR-0002, operated over by the `session/` module (ADR-0007).
 --
--- Deliberately NOT included here:
---   - `placement`/`placement_config`/`placement_access` (D4/D4a) - belongs
---     to a future scheduler/ package
+-- This file also promotes `placement`/`placement_config`/`placement_access`
+-- (design.md D4/D4a, task 4.1a, docs/impl-plans/0005-placement.md) -
+-- promoted from archive/placement-resolver/schema.sql - the fourth and
+-- last piece of the D6 four-way consolidation (durability core, session
+-- log, placement, dataset catalog). Decision logic over these tables
+-- (resolvePlacement, recordAccess, evaluatePromotion/evaluateDemotion,
+-- promote/demote, evictLRUIfOverCapacity, isTrustEligibleForOptimization)
+-- lives in the `scheduler/` module (ADR-0007), not here - `core/` owns
+-- only the schema and thin per-table repositories.
 --
 -- Uses the default `public` schema, not a dedicated SQL schema namespace -
 -- spike 1.2's `spike` schema existed only to isolate it from other
@@ -258,3 +264,110 @@ CREATE TABLE IF NOT EXISTS session_pointer (
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (current_sequence >= 0)
 );
+
+-- Placement (design.md D4/D4a, task 4.1a): the bespoke-resolver option
+-- formalized by task 1.10 (archive/placement-resolver/), promoted here per
+-- ADR-0002/0007's split - the schema lives in `core/`, the decision logic
+-- that operates over it lives in `scheduler/`. Uses the default `public`
+-- schema, same namespacing call already made for the rest of this file -
+-- the archived `placement` SQL-schema wrapper existed only to isolate the
+-- formalization spike from other experiments sharing one dev database.
+--
+-- Tunable scheduler parameters as DATA (D4a: every threshold is a
+-- "starting default exposed as a tunable scheduler parameter, not a
+-- hardcoded constant"). scheduler/constants.ts's DEFAULT_PLACEMENT_CONFIG
+-- mirrors the seeded row below - kept in sync by hand, same posture as
+-- core/constants.ts's DEFAULT_LEASE_SECONDS.
+CREATE TABLE IF NOT EXISTS placement_config (
+    name          TEXT PRIMARY KEY,
+    config        JSONB NOT NULL,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO placement_config (name, config)
+VALUES ('default', $json${
+  "promotion": {
+    "frequencyThreshold": 3,
+    "frequencyWindowMs": 420000,
+    "rehydrationCostThresholdMs": 250
+  },
+  "demotion": {
+    "idleThresholdMs": 1200000
+  },
+  "capacity": {
+    "pinnedBudgetBytes": 1073741824
+  },
+  "cost": {
+    "observedMinSamples": 5,
+    "classPriorsMs": {
+      "trivial": 10,
+      "cheap": 50,
+      "moderate": 300,
+      "expensive": 2000
+    }
+  }
+}$json$::jsonb)
+ON CONFLICT (name) DO NOTHING;
+
+-- The formalized placement table (task 1.10, promoted). `replica_id`/
+-- `session_id` are NULLABLE (unlike spike 1.2's minimal table): a hash can
+-- be tracked for admission before/without a bound replica, and a
+-- demoted/evicted entry retains its fact with no live replica - a
+-- resolver "miss" is `replica_id IS NULL` or no row at all, never an
+-- error (D4: affinity is always an optimization). `session_id` stays
+-- NULLABLE because static/shared/immutable bindings (D4 scope=static)
+-- are not session-scoped.
+CREATE TABLE IF NOT EXISTS placement (
+    content_hash              TEXT PRIMARY KEY,
+    replica_id                TEXT,
+    session_id                TEXT,
+
+    pinned                    BOOLEAN NOT NULL DEFAULT false,
+    pinned_at                 TIMESTAMPTZ,
+
+    -- Workflow-writer declared intent (D4). 'batch' is the conservative
+    -- default: D4a forbids auto-promoting batch bindings regardless of
+    -- frequency, so an unknown/undeclared binding must never accidentally
+    -- qualify for promotion.
+    interactivity             TEXT NOT NULL DEFAULT 'batch'
+                                CHECK (interactivity IN ('interactive', 'batch')),
+
+    -- Frequency/recency signal (D4a promotion + demotion). access_count is
+    -- the cumulative lifetime counter; the windowed ">=3 within N minutes"
+    -- test is computed from placement_access below, since a cumulative
+    -- count can't answer a rolling-window question on its own.
+    access_count              BIGINT NOT NULL DEFAULT 0,
+    first_accessed_at         TIMESTAMPTZ,
+    last_accessed_at          TIMESTAMPTZ,
+
+    -- Rehydration-cost model (D4a: declared prior -> observed average).
+    declared_cost_class       TEXT
+                                CHECK (declared_cost_class IS NULL OR
+                                       declared_cost_class IN
+                                       ('trivial', 'cheap', 'moderate', 'expensive')),
+    observed_rehydration_ms   DOUBLE PRECISION,
+    observed_sample_count     INT NOT NULL DEFAULT 0,
+
+    -- Capacity-aware LRU eviction (D4a).
+    size_bytes                BIGINT NOT NULL DEFAULT 0,
+
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Eviction scans the PINNED set ordered by recency (LRU); index it.
+CREATE INDEX IF NOT EXISTS placement_pinned_lru_idx
+    ON placement (last_accessed_at)
+    WHERE pinned = true;
+
+-- Rolling-window access event log (D4a): append-one-row-per-access so the
+-- windowed frequency test is exact rather than an approximation of a
+-- cumulative counter. PlacementAccessRepo.pruneOlderThan keeps this
+-- bounded.
+CREATE TABLE IF NOT EXISTS placement_access (
+    content_hash  TEXT NOT NULL,
+    accessed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS placement_access_hash_time_idx
+    ON placement_access (content_hash, accessed_at);

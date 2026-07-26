@@ -17,6 +17,8 @@ export const ERROR_IDS = {
   CORE_WAIT_KEY_TOO_LONG: "core.waits.wait_key_too_long",
   CORE_SESSION_LOG_NO_ROW_RETURNED: "core.session_log.insert_no_row_returned",
   CORE_SESSION_POINTER_NO_ROW_RETURNED: "core.session_pointer.no_row_returned",
+  CORE_PLACEMENT_UPSERT_NO_ROW_RETURNED: "core.placement.upsert_no_row_returned",
+  CORE_PLACEMENT_SET_PINNED_NOT_FOUND: "core.placement.set_pinned_not_found",
   SESSION_REWIND_TARGET_OUT_OF_RANGE: "session.rewind.target_out_of_range",
 } as const;
 
@@ -36,6 +38,10 @@ export const DEFAULT_ERROR_MESSAGES: Record<ErrorId, string> = {
     "Inserting a session log entry did not return the inserted row.",
   [ERROR_IDS.CORE_SESSION_POINTER_NO_ROW_RETURNED]:
     "Locking or updating a session pointer did not return a row.",
+  [ERROR_IDS.CORE_PLACEMENT_UPSERT_NO_ROW_RETURNED]:
+    "Upserting a placement access did not return the upserted row.",
+  [ERROR_IDS.CORE_PLACEMENT_SET_PINNED_NOT_FOUND]:
+    "Setting a placement's pinned residency found no existing row for that content hash.",
   [ERROR_IDS.SESSION_REWIND_TARGET_OUT_OF_RANGE]:
     "A session rewind's target sequence is negative or ahead of the session's current sequence.",
 };

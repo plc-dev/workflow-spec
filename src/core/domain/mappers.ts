@@ -1,8 +1,12 @@
 import type { Checkpoint } from "./checkpoint.js";
 import type { Execution } from "./execution.js";
+import type { PlacementConfig } from "./placement-config.js";
+import type { Placement } from "./placement.js";
 import type {
   CheckpointRow,
   ExecutionRow,
+  PlacementConfigRow,
+  PlacementRow,
   SessionLogEntryRow,
   SessionPointerRow,
   WaitRow,
@@ -62,4 +66,33 @@ export function mapSessionPointerRow(row: SessionPointerRow): SessionPointer {
     currentSequence: Number(row.current_sequence),
     updatedAt: row.updated_at,
   };
+}
+
+export function mapPlacementRow(row: PlacementRow): Placement {
+  return {
+    contentHash: row.content_hash,
+    replicaId: row.replica_id,
+    sessionId: row.session_id,
+    pinned: row.pinned,
+    pinnedAt: row.pinned_at,
+    interactivity: row.interactivity,
+    accessCount: Number(row.access_count),
+    firstAccessedAt: row.first_accessed_at,
+    lastAccessedAt: row.last_accessed_at,
+    declaredCostClass: row.declared_cost_class,
+    observedRehydrationMs: row.observed_rehydration_ms,
+    observedSampleCount: row.observed_sample_count,
+    sizeBytes: Number(row.size_bytes),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// `config` is JSONB - already a plain object by the time `pg` returns it,
+// no JSON.parse needed. Cast, not validated: this row is only ever
+// written by this codebase's own seeded schema.sql data, never
+// externally authored input (unlike ir/validate.ts's untrusted-document
+// case).
+export function mapPlacementConfigRow(row: PlacementConfigRow): PlacementConfig {
+  return row.config as PlacementConfig;
 }

@@ -5,12 +5,20 @@ export type {
   Checkpoint,
   Execution,
   ExecutionStatus,
+  Placement,
+  PlacementConfig,
   SessionLogEntry,
   SessionPointer,
   Wait,
 } from "./domain/index.js";
 export type { CheckpointsRepo } from "./repositories/checkpoints.repository.js";
 export type { ExecutionsRepo } from "./repositories/executions.repository.js";
+export type { PlacementAccessRepo } from "./repositories/placement-access.repository.js";
+export type { PlacementConfigRepo } from "./repositories/placement-config.repository.js";
+export type {
+  PlacementRepo,
+  UpsertPlacementAccessInput,
+} from "./repositories/placement.repository.js";
 export type { SessionLogRepo } from "./repositories/session-log.repository.js";
 export type { SessionPointerRepo } from "./repositories/session-pointer.repository.js";
 export type { WaitsRepo } from "./repositories/waits.repository.js";

@@ -8,6 +8,15 @@ import {
   createExecutionsRepo,
 } from "../repositories/executions.repository.js";
 import {
+  type PlacementAccessRepo,
+  createPlacementAccessRepo,
+} from "../repositories/placement-access.repository.js";
+import {
+  type PlacementConfigRepo,
+  createPlacementConfigRepo,
+} from "../repositories/placement-config.repository.js";
+import { type PlacementRepo, createPlacementRepo } from "../repositories/placement.repository.js";
+import {
   type SessionLogRepo,
   createSessionLogRepo,
 } from "../repositories/session-log.repository.js";
@@ -24,16 +33,21 @@ import { type WaitsRepo, createWaitsRepo } from "../repositories/waits.repositor
 // transaction is opened/committed/rolled back.
 //
 // This package builds the `executions`/`checkpoints`/`waits`/`sessionLog`/
-// `sessionPointer` members of the eventual full repo set (ADR-0002's
-// diagram also lists `placement`, `datasetIndex`, `memoization`) - those
-// are added incrementally by the packages that actually need them, per
-// docs/impl-plans/0001-durable-core.md's "Open questions" section.
+// `sessionPointer`/`placement`/`placementConfig`/`placementAccess`
+// members of the eventual full repo set (ADR-0002's diagram also lists
+// `datasetIndex`, `memoization`) - those are added incrementally by the
+// packages that actually need them, per docs/impl-plans/0001-durable-
+// core.md's "Open questions" section. `placement`/`placementConfig`/
+// `placementAccess` were added by docs/impl-plans/0005-placement.md.
 export interface CoreRepos {
   executions: ExecutionsRepo;
   checkpoints: CheckpointsRepo;
   waits: WaitsRepo;
   sessionLog: SessionLogRepo;
   sessionPointer: SessionPointerRepo;
+  placement: PlacementRepo;
+  placementConfig: PlacementConfigRepo;
+  placementAccess: PlacementAccessRepo;
   // The raw transaction client itself, for a caller that needs to issue
   // its own query on the SAME transaction before a typed repo exists for
   // it yet (e.g. a future scheduler/dataset-catalog write, or - in this
@@ -64,6 +78,9 @@ export async function withTransaction<T>(
       waits: createWaitsRepo(client),
       sessionLog: createSessionLogRepo(client),
       sessionPointer: createSessionPointerRepo(client),
+      placement: createPlacementRepo(client),
+      placementConfig: createPlacementConfigRepo(client),
+      placementAccess: createPlacementAccessRepo(client),
       client,
     };
     const result = await fn(repos);

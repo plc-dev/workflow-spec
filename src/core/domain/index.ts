@@ -3,13 +3,19 @@ export type { Execution, ExecutionStatus } from "./execution.js";
 export {
   mapCheckpointRow,
   mapExecutionRow,
+  mapPlacementConfigRow,
+  mapPlacementRow,
   mapSessionLogEntryRow,
   mapSessionPointerRow,
   mapWaitRow,
 } from "./mappers.js";
+export type { PlacementConfig } from "./placement-config.js";
+export type { Placement } from "./placement.js";
 export type {
   CheckpointRow,
   ExecutionRow,
+  PlacementConfigRow,
+  PlacementRow,
   SessionLogEntryRow,
   SessionPointerRow,
   WaitRow,
