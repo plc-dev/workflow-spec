@@ -17,7 +17,7 @@ services:
       - "5432:5432"
     volumes:
       - wfx-postgres-data:/var/lib/postgresql/data
-      - ./src/core/schema.sql:/docker-entrypoint-initdb.d/01-core-schema.sql:ro
+      - ./src/core/database/schema.sql:/docker-entrypoint-initdb.d/01-core-schema.sql:ro
 
 volumes:
   wfx-postgres-data:

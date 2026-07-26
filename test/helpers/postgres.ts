@@ -5,7 +5,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { Pool } from "pg";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCHEMA_PATH = path.join(__dirname, "../../src/core/schema.sql");
+const SCHEMA_PATH = path.join(__dirname, "../../src/core/database/schema.sql");
 
 export interface TestPostgres {
   container: StartedPostgreSqlContainer;

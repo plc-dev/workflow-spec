@@ -1,9 +1,10 @@
 import { z } from "zod";
 
-// ADR-0009: "Config loading: one src/config.ts. A zod schema over
+// ADR-0009: "Config loading: one src/shared/config.ts. A zod schema over
 // process.env, parsed once at each app's startup; fails closed (a startup
 // crash, not a silent default) on anything missing or invalid. No
-// scattered process.env.X reads elsewhere in the codebase."
+// scattered process.env.X reads elsewhere in the codebase." (path grouped
+// under src/shared/ per ADR-0012.)
 //
 // Required env vars have no `.default(...)` - a missing/invalid value
 // throws at import time (fail-closed). Optional env vars carry an explicit

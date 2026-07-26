@@ -395,7 +395,10 @@ no code/scope/test-design change):
   `.kilo/command/impl-package.md`'s Phase 3 so every future work package
   follows it.
 
-All 8 planned test cases (TC-1 through TC-8) are implemented and passing:
+All 8 planned test cases (TC-1 through TC-8) are implemented and passing
+(paths below are as they were at the time this section was first written;
+see the ADR-0012 restructure note further down for their current,
+authoritative locations):
 
 - TC-1: `test/core/schema.test.ts` (4 tests)
 - TC-2, TC-3: `test/core/executions.test.ts` (2 tests)
@@ -411,6 +414,67 @@ assumed.
 
 No follow-up tasks spun off beyond the already-planned 6.1b split (see
 Scope).
+
+**Post-review structural restructure (ADR-0012)** (requested after
+`reviewed`; no scope/test-design/behavior change, a pure file-layout and
+naming pass across everything this package landed, per the repo owner's
+explicit go-ahead to write `docs/adr/0012-module-internal-structure-and-
+naming.md` and apply it here as the first module to follow it):
+
+- **Cross-cutting concerns grouped under `src/shared/`** (amends
+  ADR-0009's literal `src/config.ts`/`src/errors.ts` paths, per ADR-0012):
+  `src/config.ts` -> `src/shared/config.ts`; `src/errors.ts` ->
+  `src/shared/errors.ts`; `src/logger.ts` ->
+  `src/shared/observability/logger.ts`. `src/shared/index.ts` and
+  `src/shared/observability/index.ts` added as the barrels other modules
+  import through.
+- **`core/`'s internal shape reorganized** per ADR-0012's module template:
+  `src/core/db.ts` -> `src/core/database/connection-pool.ts`;
+  `src/core/tx.ts` -> `src/core/database/transactions.ts`;
+  `src/core/schema.sql` -> `src/core/database/schema.sql`;
+  `src/core/repositories/executions.ts` ->
+  `src/core/repositories/executions.repository.ts` (same for
+  `checkpoints`); `src/core/repositories/*.queries.ts` moved into a new
+  `src/core/repositories/queries/` subdirectory. `src/core/types.ts` -
+  which had conflated domain types, raw `pg` row shapes, and row<->domain
+  mappers - split into `src/core/domain/{execution,checkpoint,rows,
+  mappers}.ts` plus a `domain/index.ts` barrel.
+- **`engine/`'s logic separated from its barrel**: the two primitives
+  moved from `src/engine/index.ts` into `src/engine/claim-complete.ts`;
+  `index.ts` is now re-exports only.
+- **Barrel-only cross-module imports enforced going forward**: `engine/`
+  now imports `core/`'s types/`withTransaction` via `core/index.js` and
+  `shared/`'s logger via `shared/index.js`, never a deep path into either
+  module's internals; `core/`'s own repositories import `shared/`'s
+  `ERROR_IDS`/`FatalError` the same way. Deep relative imports *within*
+  `core/` (e.g. a repository importing `../domain/index.js`) remain fine
+  per ADR-0012's own carve-out for intra-module imports.
+- **Tests moved to mirror the new `src/` tree exactly** (`test/core/
+  database/`, `test/core/repositories/`, `test/shared/`, `test/shared/
+  observability/`), per ADR-0012 §6. Test *content* is unchanged beyond
+  updated import paths - no test was added, removed, or altered in intent.
+- `docker-compose.dev.yml`'s schema-mount path, `test/helpers/postgres.ts`'s
+  schema path, `.example.env`'s file references, `implementation-best-
+  practices.md`'s paths, and this task's own `tasks.md` "Done: see ..."
+  paths were all updated to match.
+
+All 21 tests still pass after the restructure (verified: `npx tsc
+--noEmit`, `npx biome check .`, `npx vitest run`, immediately below this
+section's own claim, not assumed) - the current, authoritative file list
+is:
+
+- `src/shared/{config,errors}.ts`, `src/shared/observability/logger.ts`,
+  both barrels
+- `src/core/database/{connection-pool,transactions,schema.sql}`,
+  `src/core/domain/{execution,checkpoint,rows,mappers,index}.ts`,
+  `src/core/repositories/{executions,checkpoints}.repository.ts`,
+  `src/core/repositories/queries/{executions,checkpoints}.queries.ts`,
+  `src/core/constants.ts`, `src/core/index.ts`
+- `src/engine/claim-complete.ts`, `src/engine/index.ts`
+- Tests: `test/shared/{config,errors}.test.ts`, `test/shared/
+  observability/logger.test.ts`, `test/core/database/{schema,
+  transactions}.test.ts`, `test/core/repositories/{executions,
+  checkpoints}.repository.test.ts`, `test/engine/claim-complete.test.ts`
 
 ## Review notes
 

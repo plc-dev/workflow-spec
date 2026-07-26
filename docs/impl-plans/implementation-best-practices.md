@@ -15,9 +15,9 @@ explicitly say so.
 
 ## 1. No scattered `process.env` reads
 
-All environment variables are read in exactly one place: `src/config.ts`,
-via a `zod` schema (per ADR-0009). No other module reads `process.env`
-directly.
+All environment variables are read in exactly one place:
+`src/shared/config.ts`, via a `zod` schema (per ADR-0009, path per
+ADR-0012). No other module reads `process.env` directly.
 
 - **Required** variables have no `.default(...)` in the schema - a
   missing or invalid value throws at parse time (fail closed), never
@@ -39,11 +39,14 @@ named constant, not a string literal inline at the call site.
 
 - Constants are prefixed `SQL_` (e.g. `SQL_CLAIM_EXECUTION`) so every
   query in the codebase is greppable by that prefix alone.
-- Constants live in a sibling `<name>.queries.ts` file next to the
-  module/repository that issues them (e.g.
-  `src/core/repositories/executions.queries.ts` next to
-  `executions.ts`) - not a single catch-all queries file for the whole
-  codebase.
+- Constants live in a `<name>.queries.ts` file under that repository's
+  module's `repositories/queries/` subdirectory (e.g.
+  `src/core/repositories/queries/executions.queries.ts`, for
+  `src/core/repositories/executions.repository.ts`) - per ADR-0012, kept
+  in its own subdirectory rather than beside the repository files so a
+  module with several repositories doesn't bury its repository files
+  among an equal number of query files. Not a single catch-all queries
+  file for the whole codebase.
 - **Test code is exempt.** SQL used for test setup/fixtures/assertions
   (seeding rows, asserting row counts, etc.) may stay inline - that is
   idiomatic test code, not "the code" this practice is about.
@@ -55,8 +58,8 @@ timeout, a default lease duration, a log-event name, a redact path, a
 status string, etc.) is extracted into a named constant.
 
 - Shared constants for a module live in that module's own `constants.ts`
-  (e.g. `src/core/constants.ts`); constants used by only one file may live
-  at the top of that file instead.
+  (e.g. `src/core/constants.ts`, per ADR-0012's module shape); constants
+  used by only one file may live at the top of that file instead.
 - If a value's canonical source of truth is unavoidably split across two
   runtimes (e.g. a lease-duration default that exists both as a
   PL/pgSQL function's SQL-level `DEFAULT` and as a TypeScript function's
@@ -66,9 +69,9 @@ status string, etc.) is extracted into a named constant.
 
 ## 4. Structured error taxonomy, never bare `Error`
 
-Production code throws subclasses of the shared `src/errors.ts` taxonomy
-(`PlatformError`, `RetryableError`, `FatalError` - per ADR-0009), never a
-bare `new Error("...")`.
+Production code throws subclasses of the shared `src/shared/errors.ts`
+taxonomy (`PlatformError`, `RetryableError`, `FatalError` - per ADR-0009,
+path per ADR-0012), never a bare `new Error("...")`.
 
 - Every thrown error carries a stable, namespaced **`errorId`** (defined
   once in a central `ERROR_IDS` map, e.g.
@@ -84,8 +87,20 @@ bare `new Error("...")`.
 
 ## 5. `.example.env` documents every environment variable
 
-The repo root `.example.env` lists every variable `src/config.ts`'s schema
-reads, each with a one-line comment stating its purpose, whether it's
-required or optional, and its default if optional. Updated in the same
-change that adds/removes/changes a variable in `config.ts` - never allowed
-to drift out of sync.
+The repo root `.example.env` lists every variable
+`src/shared/config.ts`'s schema reads, each with a one-line comment
+stating its purpose, whether it's required or optional, and its default if
+optional. Updated in the same change that adds/removes/changes a variable
+in `config.ts` - never allowed to drift out of sync.
+
+## 6. Module structure and naming - see ADR-0012
+
+Module-internal directory structure (`database/`, `repositories/` +
+`repositories/queries/`, `domain/`), the cross-cutting `src/shared/`
+module (`config`/`errors`/`observability` - a closed set, see ADR-0012 §3),
+the barrel-only (`index.ts`) cross-module import rule, and filename/
+directory naming conventions (no abbreviations, kebab-case, role suffixes,
+plural/singular rules) are governed by
+`docs/adr/0012-module-internal-structure-and-naming.md` in full. This
+document does not restate them - follow that ADR directly. Test files
+continue to mirror `src/` under `test/`, per that ADR's §6.

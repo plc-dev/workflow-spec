@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { withTransaction } from "../../src/core/tx.js";
-import { type TestPostgres, startTestPostgres } from "../helpers/postgres.js";
+import { withTransaction } from "../../../src/core/index.js";
+import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
 
 // TC-6: withTransaction's atomicity guarantee, generalized beyond
 // claim/complete's own use of it (ADR-0002) - matters because session/ and

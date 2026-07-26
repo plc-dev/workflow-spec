@@ -77,14 +77,21 @@ ground or contradicting an already-agreed plan.
 
 ## Phase 3 - IMPLEMENT
 
-0. Read `docs/impl-plans/implementation-best-practices.md` and follow every
-   practice in it (env vars only via `src/config.ts`, no inlined raw SQL
-   strings, no magic numbers/strings, structured errors via
-   `src/errors.ts`, `.example.env` kept in sync) for any code this phase
-   writes. That document is closed except by the repo owner's explicit
+0. Read `docs/impl-plans/implementation-best-practices.md` AND
+   `docs/adr/0012-module-internal-structure-and-naming.md`, and follow both
+   for any code this phase writes: env vars only via `src/shared/
+   config.ts`, no inlined raw SQL strings (named `SQL_*` constants under
+   each repository's `repositories/queries/`), no magic numbers/strings,
+   structured errors via `src/shared/errors.ts`, `.example.env` kept in
+   sync, the module-internal shape and naming conventions ADR-0012 fixes
+   (`database/`/`repositories/`/`domain/`, the closed `src/shared/` set,
+   barrel-only cross-module imports, no filename abbreviations). The
+   best-practices document is closed except by the repo owner's explicit
    instruction - do not add to it, remove from it, or reinterpret it on
-   your own initiative, even if a new situation seems to call for it;
-   flag the gap to the user instead.
+   your own initiative, even if a new situation seems to call for it; flag
+   the gap to the user instead. ADR-0012 itself is a normal ADR
+   (amendable via the usual ADR process, not locked the way the
+   best-practices doc is).
 1. Implement exactly what was agreed in Phase 1. If reality forces a
    deviation, stop and flag it rather than silently diverging - small
    deviations can be noted in the doc's implementation-notes section as you

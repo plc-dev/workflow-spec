@@ -1,13 +1,13 @@
 import type { PoolClient } from "pg";
-import { ERROR_IDS, FatalError } from "../../errors.js";
+import { ERROR_IDS, FatalError } from "../../shared/index.js";
 import { DEFAULT_LEASE_SECONDS } from "../constants.js";
-import { type Execution, type ExecutionRow, mapExecutionRow } from "../types.js";
+import { type Execution, type ExecutionRow, mapExecutionRow } from "../domain/index.js";
 import {
   SQL_CLAIM_EXECUTION,
   SQL_ENQUEUE_EXECUTION,
   SQL_FIND_EXECUTION_BY_ID,
   SQL_MARK_EXECUTION_DONE,
-} from "./executions.queries.js";
+} from "./queries/executions.queries.js";
 
 export interface ExecutionsRepo {
   enqueue(input: { sessionId: string; step: string; input: unknown }): Promise<Execution>;

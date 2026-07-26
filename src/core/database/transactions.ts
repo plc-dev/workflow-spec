@@ -1,6 +1,12 @@
 import type { Pool, PoolClient } from "pg";
-import { type CheckpointsRepo, createCheckpointsRepo } from "./repositories/checkpoints.js";
-import { type ExecutionsRepo, createExecutionsRepo } from "./repositories/executions.js";
+import {
+  type CheckpointsRepo,
+  createCheckpointsRepo,
+} from "../repositories/checkpoints.repository.js";
+import {
+  type ExecutionsRepo,
+  createExecutionsRepo,
+} from "../repositories/executions.repository.js";
 
 // ADR-0002: `core/` exposes `withTransaction(fn) -> repos`. Higher-level
 // concerns (engine/, and later session/, scheduler/, dataset-catalog/)

@@ -1,8 +1,9 @@
-// ADR-0009: "One shared src/errors.ts: a PlatformError base, with
-// RetryableError and FatalError subclasses." D6 R7 (native retries) and
-// D8d (no DSL-level retry surface - platform-managed) both require the
-// engine to mechanically distinguish these somewhere; one shared place
-// avoids each module inventing its own ad hoc convention.
+// ADR-0009: "One shared src/shared/errors.ts: a PlatformError base, with
+// RetryableError and FatalError subclasses." (path grouped under
+// src/shared/ per ADR-0012.) D6 R7 (native retries) and D8d (no DSL-level
+// retry surface - platform-managed) both require the engine to
+// mechanically distinguish these somewhere; one shared place avoids each
+// module inventing its own ad hoc convention.
 //
 // Every PlatformError carries a stable `errorId` separate from its
 // human-readable `message` - the id is the thing an external system can

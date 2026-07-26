@@ -83,10 +83,15 @@ schema-authored-first). Everything else that is TS-authored-first - env
 config, the ADR-0008 `Invoke`/`Evict` RPC payloads - uses zod instead, for
 ergonomics, not as a second, competing IR contract.
 
-**Config loading: one `src/config.ts`.** A zod schema over `process.env`,
-parsed once at each app's startup; fails closed (a startup crash, not a
-silent default) on anything missing or invalid. No scattered
-`process.env.X` reads elsewhere in the codebase.
+**Config loading: one `src/shared/config.ts`.** A zod schema over
+`process.env`, parsed once at each app's startup; fails closed (a startup
+crash, not a silent default) on anything missing or invalid. No scattered
+`process.env.X` reads elsewhere in the codebase. **Revised by ADR-0012:**
+originally written as `src/config.ts`; ADR-0012 groups this under
+`src/shared/` alongside the error taxonomy and logger, as one of a closed
+set of named cross-cutting concerns, rather than as a loose file at the
+top of `src/`. The decision itself (one zod schema, fail-closed, no
+scattered reads) is unchanged.
 
 **Observability instrumentation.** `pino` for structured, JSON logging,
 with a shared `redact` configuration covering known secret-shaped fields
@@ -96,13 +101,19 @@ with `executionId`/`stepId` (the same tuple ADR-0008 already establishes as
 the durable idempotency key) carried as span attributes rather than a
 second, invented correlation id. The exporter destination is deliberately
 left undecided - there is nowhere to send traces yet, and picking one now
-would be speculative in the same way a migration tool would be.
+would be speculative in the same way a migration tool would be. **Revised
+by ADR-0012:** the logger lives at `src/shared/observability/logger.ts`
+(was `src/logger.ts`); the future OpenTelemetry wiring joins it in the same
+`observability/` directory.
 
-**Error taxonomy.** One shared `src/errors.ts`: a `PlatformError` base, with
-`RetryableError` and `FatalError` subclasses. D6 R7 (native retries) and
-D8d (no DSL-level retry surface - platform-managed) both require the engine
-to mechanically distinguish these somewhere; one shared place avoids each
-module inventing its own ad hoc convention for the same distinction.
+**Error taxonomy.** One shared `src/shared/errors.ts`: a `PlatformError`
+base, with `RetryableError` and `FatalError` subclasses. D6 R7 (native
+retries) and D8d (no DSL-level retry surface - platform-managed) both
+require the engine to mechanically distinguish these somewhere; one shared
+place avoids each module inventing its own ad hoc convention for the same
+distinction. **Revised by ADR-0012:** originally written as
+`src/errors.ts`; location grouped under `src/shared/` per the same
+reasoning as config, above.
 
 ## Consequences
 

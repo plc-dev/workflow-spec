@@ -17,10 +17,13 @@ Produced and driven by the `/impl-package` command (see
 
 **`implementation-best-practices.md`** in this directory is a binding set
 of coding conventions every work package's Phase 3 (Implement) must follow
-(env vars only via `src/config.ts`, no inlined raw SQL, no magic
-numbers/strings, structured errors via `src/errors.ts`, `.example.env`
-kept in sync). It is closed except by the repo owner's explicit
-instruction - `/impl-package` must not extend it on its own.
+(env vars only via `src/shared/config.ts`, no inlined raw SQL, no magic
+numbers/strings, structured errors via `src/shared/errors.ts`,
+`.example.env` kept in sync). It is closed except by the repo owner's
+explicit instruction - `/impl-package` must not extend it on its own.
+Module-internal directory structure and naming conventions are governed by
+`docs/adr/0012-module-internal-structure-and-naming.md` (a normal,
+amendable ADR, referenced but not restated by the best-practices doc).
 
 ## Naming
 

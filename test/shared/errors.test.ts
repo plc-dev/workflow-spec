@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_ERROR_MESSAGES, ERROR_IDS, FatalError, RetryableError } from "../src/errors.js";
+import {
+  DEFAULT_ERROR_MESSAGES,
+  ERROR_IDS,
+  FatalError,
+  RetryableError,
+} from "../../src/shared/errors.js";
 
 describe("PlatformError subclasses", () => {
   it("carries a stable errorId separate from its default message", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REDACT_CONFIG, logger } from "../src/logger.js";
+import { REDACT_CONFIG, logger } from "../../../src/shared/observability/logger.js";
 
 // TC-8: scaffolding smoke test - no testcontainers needed (ADR-0009: pino +
 // redact was already decided; this just confirms the shared instance is

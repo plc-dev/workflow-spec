@@ -18,7 +18,50 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "nursery": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "../core/database/connection-pool.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/database/connection-pool.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/database/transactions.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/database/transactions.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/repositories/executions.repository.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/repositories/executions.repository.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/repositories/checkpoints.repository.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/repositories/checkpoints.repository.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/repositories/queries/executions.queries.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/repositories/queries/executions.queries.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/repositories/queries/checkpoints.queries.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/repositories/queries/checkpoints.queries.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/domain/execution.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/domain/execution.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/domain/checkpoint.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/domain/checkpoint.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/domain/rows.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/domain/rows.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/domain/mappers.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/domain/mappers.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/domain/index.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/domain/index.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../core/constants.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../core/constants.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../shared/config.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../shared/config.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../shared/errors.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../shared/errors.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../shared/observability/logger.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../shared/observability/logger.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../shared/observability/index.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../shared/observability/index.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../engine/claim-complete.js": "Import this module only via its index.ts barrel (ADR-0012 SS4).",
+              "../../engine/claim-complete.js": "Import this module only via its index.ts barrel (ADR-0012 SS4)."
+            }
+          }
+        }
+      }
     }
   },
   "javascript": {

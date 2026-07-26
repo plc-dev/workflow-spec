@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type TestPostgres, startTestPostgres } from "../helpers/postgres.js";
+import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
 
 // TC-1 (docs/impl-plans/0001-durable-core.md): applying schema.sql fresh
 // produces the tables/constraints/function ADR-0002's consolidated-schema

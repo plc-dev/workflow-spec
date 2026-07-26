@@ -1,10 +1,10 @@
 import type { PoolClient } from "pg";
-import { ERROR_IDS, FatalError } from "../../errors.js";
-import { type Checkpoint, type CheckpointRow, mapCheckpointRow } from "../types.js";
+import { ERROR_IDS, FatalError } from "../../shared/index.js";
+import { type Checkpoint, type CheckpointRow, mapCheckpointRow } from "../domain/index.js";
 import {
   SQL_FIND_CHECKPOINT_BY_EXECUTION_AND_STEP,
   SQL_INSERT_CHECKPOINT,
-} from "./checkpoints.queries.js";
+} from "./queries/checkpoints.queries.js";
 
 export interface CheckpointsRepo {
   // Idempotent - see SQL_INSERT_CHECKPOINT's own comment for why.

@@ -24,6 +24,7 @@ building." Each ADR names which conceptual decision(s) it derives from.
 | [0009](./0009-language-build-and-quality-tooling.md) | Language, build, and code-quality tooling | extends ADR-0001; D6a (clean-room ethos), D7/task 9.6 (redaction), D6 R7/D8d (error taxonomy) |
 | [0010](./0010-ci-hygiene-and-local-dev-environment.md) | CI, repository hygiene, and local development environment | extends ADR-0009; D7 (secret scanning), ADR-0006 (dev-stack database split) |
 | [0011](./0011-nested-dispatch-via-minted-callbacks.md) | Nested dispatch via minted, per-invocation callback references | D7, D9b, D9c, D12; extends ADR-0004/0008 |
+| [0012](./0012-module-internal-structure-and-naming.md) | Module-internal structure, cross-cutting `shared/`, and naming conventions | extends ADR-0007/0009; no new D-number (implementation-hygiene, not conceptual design) |
 
 **Note on naming across ADR-0002 through ADR-0006/0008:** these were
 drafted before ADR-0001's revision and refer to `@wfx/core`, `@wfx/registry`,

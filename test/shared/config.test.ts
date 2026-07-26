@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConfig } from "../src/config.js";
+import { parseConfig } from "../../src/shared/config.js";
 
 // No testcontainers needed - config parsing has no I/O beyond reading the
 // env object it's handed.
