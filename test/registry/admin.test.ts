@@ -1,10 +1,9 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { registerImage } from "../../src/registry/admin.js";
 import { getEntry } from "../../src/registry/get-entry.js";
 import { ERROR_IDS, FatalError } from "../../src/shared/index.js";
-import { type TestPostgres, startTestPostgres } from "../helpers/postgres.js";
+import type { TestPostgres } from "../helpers/postgres.js";
+import { resetRegistryTables, startRegistryPostgres } from "../helpers/registry-postgres.js";
 import {
   CAPABILITY_METADATA,
   DIGEST,
@@ -13,15 +12,12 @@ import {
   OPENAPI_SPEC,
 } from "./fixtures.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REGISTRY_SCHEMA_PATH = path.join(__dirname, "../../src/registry/database/schema.sql");
-
 // TC-4/TC-10 (docs/impl-plans/0007-registry.md).
 describe("registerImage", () => {
   let tp: TestPostgres;
 
   beforeAll(async () => {
-    tp = await startTestPostgres({ schemaPath: REGISTRY_SCHEMA_PATH });
+    tp = await startRegistryPostgres();
   }, 60_000);
 
   afterAll(async () => {
@@ -29,7 +25,7 @@ describe("registerImage", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE function_capabilities, service_images RESTART IDENTITY CASCADE");
+    await resetRegistryTables(tp.pool);
   });
 
   it("stores a full entry (openapi_spec, oci_ref, per-function capability metadata, hardware requirements) defaulting to unverified", async () => {

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../src/core/index.js";
 import { appendEntry, replaySession, rewindSession } from "../../src/session/index.js";
 import { type TestPostgres, startTestPostgres } from "../helpers/postgres.js";
+import { resetSessionTables } from "../helpers/reset.js";
 
 describe("session.appendEntry / rewindSession / replaySession", () => {
   let tp: TestPostgres;
@@ -15,7 +16,7 @@ describe("session.appendEntry / rewindSession / replaySession", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE session_log, session_pointer");
+    await resetSessionTables(tp.pool);
   });
 
   // TC-2: appendEntry on a session with no prior session_pointer row

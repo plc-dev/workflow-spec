@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../../src/core/index.js";
 import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
+import { resetExecutionTables } from "../../helpers/reset.js";
 
 // TC-5 (repo level): CheckpointsRepo.insert is idempotent, backed by the
 // UNIQUE(execution_id, step_id) constraint (design.md D6/R7 - "Postgres
@@ -20,7 +21,7 @@ describe("CheckpointsRepo.insert", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE executions, checkpoints, waits RESTART IDENTITY");
+    await resetExecutionTables(tp.pool);
     const {
       rows: [row],
     } = await tp.pool.query<{ id: string }>(

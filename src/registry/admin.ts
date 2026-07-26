@@ -14,17 +14,17 @@
 // app may import registry/admin.ts, per ADR-0007).
 
 import type { Pool } from "pg";
-import { ERROR_IDS, FatalError } from "../shared/index.js";
-import type { TrustTier } from "./constants.js";
+import { ERROR_IDS, FatalError, logger } from "../shared/index.js";
+import { LOG_EVENT_REGISTER_IMAGE, type TrustTier } from "./constants.js";
 import { withRegistryTransaction } from "./database/transactions.js";
-import type { FunctionCapability } from "./domain/index.js";
+import type { FunctionCapabilityInput } from "./domain/index.js";
 import { validateRegistration } from "./validate.js";
 
 export interface RegisterImageInput {
   digest: string;
   ociRef: string;
   openapiSpec: Record<string, unknown>;
-  capabilityMetadata?: Record<string, Omit<FunctionCapability, "digest" | "functionName">>;
+  capabilityMetadata?: Record<string, FunctionCapabilityInput>;
   hardwareRequirements?: Record<string, unknown>;
 }
 
@@ -60,6 +60,10 @@ export async function registerImage(
       hardwareRequirements,
     });
     await repos.functionCapabilities.replaceForDigest(input.digest, capabilityMetadata);
+    logger.debug(
+      { digest: image.digest, functionCount: Object.keys(capabilityMetadata).length },
+      LOG_EVENT_REGISTER_IMAGE,
+    );
     return { digest: image.digest, trustTier: image.trustTier };
   });
 }

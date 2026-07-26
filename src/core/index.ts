@@ -1,4 +1,4 @@
-export { createPool } from "./database/connection-pool.js";
+export { createPool } from "../shared/index.js";
 export { type CoreRepos, withTransaction } from "./database/transactions.js";
 export { createWakeListener, type WakeListener } from "./database/wake-listener.js";
 export type {

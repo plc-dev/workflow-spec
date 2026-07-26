@@ -14,9 +14,10 @@ export {
   TRUST_TIERS,
   type TrustTier,
 } from "./constants.js";
-export { createPool, type Queryable } from "./database/connection-pool.js";
+export { createPool, type Queryable } from "../shared/index.js";
 export type {
   FunctionCapability,
+  FunctionCapabilityInput,
   NestingDeclaration,
   PlacementFacts,
   RegistryEntry,

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../../src/core/index.js";
 import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
+import { resetPlacementTables } from "../../helpers/reset.js";
 
 // TC-2/TC-3 (docs/impl-plans/0005-placement.md): PlacementRepo's read
 // path never errors on a miss, and upsertAccess folds partial updates via
@@ -17,7 +18,7 @@ describe("PlacementRepo", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE placement, placement_access RESTART IDENTITY");
+    await resetPlacementTables(tp.pool);
   });
 
   // TC-2: a never-seen content hash resolves to null, not an error.

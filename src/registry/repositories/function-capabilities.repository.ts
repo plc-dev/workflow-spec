@@ -1,6 +1,7 @@
-import type { Queryable } from "../database/connection-pool.js";
+import type { Queryable } from "../../shared/index.js";
 import {
   type FunctionCapability,
+  type FunctionCapabilityInput,
   type FunctionCapabilityRow,
   mapFunctionCapabilityRow,
 } from "../domain/index.js";
@@ -9,8 +10,6 @@ import {
   SQL_INSERT_FUNCTION_CAPABILITY,
   SQL_LIST_FUNCTION_CAPABILITIES_BY_DIGEST,
 } from "./queries/function-capabilities.queries.js";
-
-export type FunctionCapabilityInput = Omit<FunctionCapability, "digest" | "functionName">;
 
 export interface FunctionCapabilitiesRepo {
   /** DELETE-then-INSERT: entirely replaces this digest's function rows. */

@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { withTransaction as withSharedTransaction } from "../../shared/index.js";
 import {
   type CheckpointsRepo,
   createCheckpointsRepo,
@@ -69,21 +70,15 @@ export interface CoreRepos {
   client: PoolClient;
 }
 
-export async function withTransaction<T>(
-  pool: Pool,
-  fn: (repos: CoreRepos) => Promise<T>,
-): Promise<T> {
-  const client = await pool.connect();
-  // A forcibly terminated backend (e.g. a crash test using
-  // pg_terminate_backend) emits an 'error' event on the client; without a
-  // listener, Node treats it as unhandled. Removed in `finally` so the
-  // pool's underlying Client re-use across connect() calls doesn't
-  // accumulate listeners.
-  const swallowError = () => {};
-  client.on("error", swallowError);
-  try {
-    await client.query("BEGIN");
-    const repos: CoreRepos = {
+// Thin wrapper over shared/database/'s generic withTransaction (ADR-0012's
+// `shared/database/` revision, docs/impl-plans/0008-shared-database-
+// consolidation.md) - this module keeps its own public signature and
+// `CoreRepos` shape; only the BEGIN/COMMIT/ROLLBACK/error-listener
+// mechanics are now shared with registry/'s equivalent wrapper.
+export function withTransaction<T>(pool: Pool, fn: (repos: CoreRepos) => Promise<T>): Promise<T> {
+  return withSharedTransaction<CoreRepos, T>(
+    pool,
+    (client): CoreRepos => ({
       executions: createExecutionsRepo(client),
       checkpoints: createCheckpointsRepo(client),
       waits: createWaitsRepo(client),
@@ -95,21 +90,7 @@ export async function withTransaction<T>(
       workflowRuns: createWorkflowRunsRepo(client),
       runNodeOutputs: createRunNodeOutputsRepo(client),
       client,
-    };
-    const result = await fn(repos);
-    await client.query("COMMIT");
-    return result;
-  } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // Connection may already be dead (e.g. a crash test that terminated
-      // the backend mid-transaction) - rollback itself failing is expected
-      // in that case, not a new error worth surfacing over the original.
-    }
-    throw err;
-  } finally {
-    client.off("error", swallowError);
-    client.release();
-  }
+    }),
+    fn,
+  );
 }

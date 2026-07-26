@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../src/core/index.js";
 import { claimExecution, completeExecution } from "../../src/engine/index.js";
 import { type TestPostgres, startTestPostgres } from "../helpers/postgres.js";
+import { resetExecutionTables } from "../helpers/reset.js";
 
 describe("engine.claimExecution / completeExecution", () => {
   let tp: TestPostgres;
@@ -15,7 +16,7 @@ describe("engine.claimExecution / completeExecution", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE executions, checkpoints, waits RESTART IDENTITY");
+    await resetExecutionTables(tp.pool);
   });
 
   it("claims and completes an execution end to end", async () => {

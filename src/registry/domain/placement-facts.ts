@@ -1,5 +1,5 @@
 import type { TrustTier } from "../constants.js";
-import type { FunctionCapability } from "./function-capability.js";
+import type { FunctionCapabilityInput } from "./function-capability.js";
 
 // getPlacementFacts' return shape (task 2.8, design.md D12) - capability
 // metadata, trust tier, and hardware requirements, all read together as
@@ -8,7 +8,7 @@ import type { FunctionCapability } from "./function-capability.js";
 export interface PlacementFacts {
   digest: string;
   function: string;
-  capability: Omit<FunctionCapability, "digest" | "functionName">;
+  capability: FunctionCapabilityInput;
   trustTier: TrustTier;
   hardwareRequirements: Record<string, unknown>;
 }

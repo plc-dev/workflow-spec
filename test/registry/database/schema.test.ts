@@ -1,11 +1,7 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MATERIALIZATION_COST_CLASSES, TRUST_TIERS } from "../../../src/registry/constants.js";
-import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REGISTRY_SCHEMA_PATH = path.join(__dirname, "../../../src/registry/database/schema.sql");
+import type { TestPostgres } from "../../helpers/postgres.js";
+import { startRegistryPostgres } from "../../helpers/registry-postgres.js";
 
 // TC-1 (docs/impl-plans/0007-registry.md): applying registry/database/
 // schema.sql fresh against a SEPARATE Postgres instance from core/'s
@@ -14,7 +10,7 @@ describe("registry/schema.sql", () => {
   let tp: TestPostgres;
 
   beforeAll(async () => {
-    tp = await startTestPostgres({ schemaPath: REGISTRY_SCHEMA_PATH });
+    tp = await startRegistryPostgres();
   }, 60_000);
 
   afterAll(async () => {

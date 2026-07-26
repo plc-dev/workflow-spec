@@ -1,4 +1,4 @@
-import type { FunctionCapability } from "../../src/registry/index.js";
+import type { FunctionCapabilityInput } from "../../src/registry/index.js";
 
 // Shared fixtures across registry/ test files - a representative service
 // image exposing two functions with different capability profiles
@@ -16,9 +16,10 @@ export const OPENAPI_SPEC = {
   },
 };
 
-type CapabilityInput = Omit<FunctionCapability, "digest" | "functionName">;
-
-export const CAPABILITY_METADATA: { runQuery: CapabilityInput; loadDump: CapabilityInput } = {
+export const CAPABILITY_METADATA: {
+  runQuery: FunctionCapabilityInput;
+  loadDump: FunctionCapabilityInput;
+} = {
   // read-only query: doesn't mutate, cheap, no COW, reports change-detection
   runQuery: {
     mutates: false,

@@ -13,8 +13,8 @@
 // verdict once probing exists.
 
 import type { Pool } from "pg";
-import { ERROR_IDS, FatalError } from "../shared/index.js";
-import type { TrustTier } from "./constants.js";
+import { ERROR_IDS, FatalError, logger } from "../shared/index.js";
+import { LOG_EVENT_RECORD_TRUST_TIER, type TrustTier } from "./constants.js";
 import { createServiceImagesRepo } from "./repositories/service-images.repository.js";
 import { validateTrustTier } from "./validate.js";
 
@@ -40,5 +40,6 @@ export async function recordTrustTier(
       context: { digest },
     });
   }
+  logger.debug({ digest: image.digest, trustTier: image.trustTier }, LOG_EVENT_RECORD_TRUST_TIER);
   return { digest: image.digest, trustTier: image.trustTier };
 }

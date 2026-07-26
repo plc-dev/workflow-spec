@@ -1,10 +1,12 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { getPlacementFacts } from "../../src/registry/get-placement-facts.js";
-import { createFunctionCapabilitiesRepo } from "../../src/registry/repositories/function-capabilities.repository.js";
 import { createServiceImagesRepo } from "../../src/registry/repositories/service-images.repository.js";
-import { type TestPostgres, startTestPostgres } from "../helpers/postgres.js";
+import type { TestPostgres } from "../helpers/postgres.js";
+import {
+  resetRegistryTables,
+  seedFixtureImage,
+  startRegistryPostgres,
+} from "../helpers/registry-postgres.js";
 import {
   CAPABILITY_METADATA,
   DIGEST,
@@ -13,9 +15,6 @@ import {
   OPENAPI_SPEC,
 } from "./fixtures.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REGISTRY_SCHEMA_PATH = path.join(__dirname, "../../src/registry/database/schema.sql");
-
 // TC-6/TC-7 (docs/impl-plans/0007-registry.md): D12's "returns capability
 // metadata, trust tier, and hardware requirements together, so callers
 // never observe them skewed relative to one another."
@@ -23,7 +22,7 @@ describe("getPlacementFacts", () => {
   let tp: TestPostgres;
 
   beforeAll(async () => {
-    tp = await startTestPostgres({ schemaPath: REGISTRY_SCHEMA_PATH });
+    tp = await startRegistryPostgres();
   }, 60_000);
 
   afterAll(async () => {
@@ -31,14 +30,14 @@ describe("getPlacementFacts", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE function_capabilities, service_images RESTART IDENTITY CASCADE");
-    await createServiceImagesRepo(tp.pool).upsert({
+    await resetRegistryTables(tp.pool);
+    await seedFixtureImage(tp.pool, {
       digest: DIGEST,
       ociRef: OCI_REF,
       openapiSpec: OPENAPI_SPEC,
       hardwareRequirements: HARDWARE_REQUIREMENTS,
+      capabilityMetadata: CAPABILITY_METADATA,
     });
-    await createFunctionCapabilitiesRepo(tp.pool).replaceForDigest(DIGEST, CAPABILITY_METADATA);
   });
 
   it("returns capability metadata, trust tier, and hardware requirements together for the requested function", async () => {

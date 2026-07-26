@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../../src/core/index.js";
 import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
+import { resetWorkflowRunTables } from "../../helpers/reset.js";
 
 describe("WorkflowRunsRepo", () => {
   let tp: TestPostgres;
@@ -14,9 +15,7 @@ describe("WorkflowRunsRepo", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query(
-      "TRUNCATE executions, run_node_outputs, workflow_runs RESTART IDENTITY CASCADE",
-    );
+    await resetWorkflowRunTables(tp.pool);
   });
 
   it("creates a run defaulting to status 'running' and returns it via findById", async () => {

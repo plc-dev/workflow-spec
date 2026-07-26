@@ -1,5 +1,5 @@
-import type { Queryable } from "./database/connection-pool.js";
-import type { FunctionCapability, RegistryEntry } from "./domain/index.js";
+import type { Queryable } from "../shared/index.js";
+import type { FunctionCapabilityInput, RegistryEntry } from "./domain/index.js";
 import { createFunctionCapabilitiesRepo } from "./repositories/function-capabilities.repository.js";
 import { createServiceImagesRepo } from "./repositories/service-images.repository.js";
 
@@ -12,7 +12,7 @@ export async function getEntry(pool: Queryable, digest: string): Promise<Registr
   if (!image) return null;
 
   const capabilities = await createFunctionCapabilitiesRepo(pool).listByDigest(digest);
-  const functions: Record<string, Omit<FunctionCapability, "digest" | "functionName">> = {};
+  const functions: Record<string, FunctionCapabilityInput> = {};
   for (const cap of capabilities) {
     functions[cap.functionName] = {
       mutates: cap.mutates,

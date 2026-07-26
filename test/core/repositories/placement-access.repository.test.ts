@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../../src/core/index.js";
 import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
+import { resetPlacementAccessTable } from "../../helpers/reset.js";
 
 describe("PlacementAccessRepo", () => {
   let tp: TestPostgres;
@@ -14,7 +15,7 @@ describe("PlacementAccessRepo", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE placement_access");
+    await resetPlacementAccessTable(tp.pool);
   });
 
   it("countWithinWindow counts only accesses within the given window", async () => {

@@ -629,6 +629,22 @@ Re-ran `npx tsc --noEmit`, `npx biome check .`, and `npx vitest run`
 immediately after these fixes: clean typecheck, clean lint, 203/203 tests
 passing across 35 files (up from 201 - the two new drift-guard tests).
 
+**Pointer forward (docs/impl-plans/0008-shared-database-consolidation.md):**
+several things recorded above were later revised by that package -
+`database/connection-pool.ts` and `Queryable` moved to
+`shared/database/`; `database/transactions.ts`'s `withRegistryTransaction`
+became a thin wrapper over `shared/database/`'s generic version, which
+also fixed a robustness gap this section didn't catch (missing tolerant-
+rollback/`'error'`-listener handling under a real mid-transaction crash -
+0007's own test design never exercised one); `RegistryRepos.client`,
+removed above as dead code, was reintroduced once a crash test genuinely
+needed it; `constants.ts`'s `TRUST_TIERS`/`TrustTier` were re-exported
+from `shared/trust-tier.ts` instead of defined locally;
+`FunctionCapabilityInput` was deduplicated across five sites. This
+paragraph is a pointer only; the sections above are left as this
+package's own historical record of what it actually built and reviewed
+at the time.
+
 ## Review notes
 
 Compared against the agreed plan (Phase 1) and agreed test design

@@ -1,4 +1,5 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
+import { withTransaction as withSharedTransaction } from "../../shared/index.js";
 import {
   type FunctionCapabilitiesRepo,
   createFunctionCapabilitiesRepo,
@@ -16,32 +17,43 @@ import {
 // small, internal-only helper - not exported from registry/index.ts, and
 // registry/ has no cross-module composability requirement to satisfy
 // (ADR-0006: registry reads/writes never join core/'s step-completion
-// transaction). No raw `client` escape hatch is exposed here (unlike
-// core/'s CoreRepos) - nothing in this package needs one, and an unused
-// one is dead weight, not a deliberate affordance.
+// transaction).
+//
+// **Revision (docs/impl-plans/0008-shared-database-consolidation.md):**
+// `client` was removed by 0007's own local review as dead code (nothing
+// used it), then reintroduced here once this revision's own crash test
+// (test/registry/database/transactions.test.ts) needed exactly the same
+// escape hatch core/'s CoreRepos already exposes, for exactly the same
+// reason: fetching the in-transaction connection's own backend pid so a
+// test can `pg_terminate_backend` it and prove the tolerant-rollback/
+// error-listener fix actually holds under a real mid-transaction crash,
+// not just a thrown-error rollback.
 export interface RegistryRepos {
   serviceImages: ServiceImagesRepo;
   functionCapabilities: FunctionCapabilitiesRepo;
+  client: PoolClient;
 }
 
-export async function withRegistryTransaction<T>(
+// Thin wrapper over shared/database/'s generic withTransaction (ADR-0012's
+// `shared/database/` revision, docs/impl-plans/0008-shared-database-
+// consolidation.md) - this module keeps its own public signature and
+// `RegistryRepos` shape. This ALSO fixes a real gap this package's own
+// first version had: the tolerant rollback (a dead connection's ROLLBACK
+// failing must not mask the original error) and the `'error'`-listener
+// handling for a forcibly terminated backend now come from the same
+// shared mechanism `core/`'s equivalent wrapper already had, rather than
+// this module's own independently-written, less complete copy.
+export function withRegistryTransaction<T>(
   pool: Pool,
   fn: (repos: RegistryRepos) => Promise<T>,
 ): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const repos: RegistryRepos = {
+  return withSharedTransaction<RegistryRepos, T>(
+    pool,
+    (client): RegistryRepos => ({
       serviceImages: createServiceImagesRepo(client),
       functionCapabilities: createFunctionCapabilitiesRepo(client),
-    };
-    const result = await fn(repos);
-    await client.query("COMMIT");
-    return result;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+      client,
+    }),
+    fn,
+  );
 }

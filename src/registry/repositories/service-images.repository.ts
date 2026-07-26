@@ -1,6 +1,6 @@
 import { ERROR_IDS, FatalError } from "../../shared/index.js";
+import type { Queryable } from "../../shared/index.js";
 import type { TrustTier } from "../constants.js";
-import type { Queryable } from "../database/connection-pool.js";
 import { type ServiceImage, type ServiceImageRow, mapServiceImageRow } from "../domain/index.js";
 import {
   SQL_FIND_SERVICE_IMAGE_BY_DIGEST,

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../../src/core/index.js";
 import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
+import { resetSessionTables } from "../../helpers/reset.js";
 
 // SessionPointerRepo.lock/setSequence, exercised at the repo level -
 // composed behavior (appendEntry/rewindSession) is covered in
@@ -17,7 +18,7 @@ describe("SessionPointerRepo", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE session_log, session_pointer");
+    await resetSessionTables(tp.pool);
   });
 
   it("creates a pointer row with current_sequence = 0 on first lock", async () => {

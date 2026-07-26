@@ -61,8 +61,12 @@ src/core/
   constants.ts
   database/
     schema.sql              this store's one canonical schema (ADR-0009)
-    connection-pool.ts      was db.ts
-    transactions.ts         was tx.ts
+    transactions.ts         was tx.ts - now a thin wrapper over
+                             shared/database/'s generic withTransaction
+                             (see this ADR's revision below); no
+                             connection-pool.ts of its own any more - pool
+                             creation itself is shared/database/'s
+                             createPool (was core/database/db.ts)
   repositories/
     executions.repository.ts
     checkpoints.repository.ts
@@ -117,7 +121,93 @@ intentions:
 
 Current sanctioned entries: `config` (ADR-0009 env configuration),
 `errors` (ADR-0009 error taxonomy), `observability` (ADR-0009 logging, and
-later tracing).
+later tracing), `database` and `trust-tier` (added by the revision below).
+
+**Revision (`docs/impl-plans/0008-shared-database-consolidation.md`): two
+new sanctioned entries.** A local code-review pass on `docs/impl-plans/
+0007-registry.md` found that `core/` and `registry/` - the first two
+modules to each own a database (ADR-0002/ADR-0006) - had already produced
+two copies of the same Postgres connection/transaction plumbing, one of
+which was missing a robustness fix (tolerant rollback + a swallowed
+`'error'` listener for a forcibly terminated backend) the other had
+already earned. Since a third own-database module (`workflow-store/`) is
+still to come per ADR-0007's inventory, this was judged a genuine
+cross-cutting concern - infrastructure every database-owning module needs
+identically, not a domain module's own logic - rather than something to
+leave as an accepted N-way duplication.
+
+```
+src/shared/
+  database/
+    index.ts                 barrel
+    connection-pool.ts        createPool(config?) -> Pool - a thin `new
+                              Pool(config)` wrapper (raw `pg`, no ORM,
+                              per ADR-0009/D6a), with no schema/module
+                              opinion of its own
+    queryable.ts              the `Queryable` interface (`{ query }`) -
+                              the minimal shape a repository needs to run
+                              a parameterized query against EITHER a
+                              plain `Pool` or an open transaction's
+                              `PoolClient`, without committing to which
+    transactions.ts           a GENERIC `withTransaction<Repos, T>(pool,
+                              buildRepos, fn)`: opens a client, attaches/
+                              detaches the tolerant `'error'` listener,
+                              BEGINs, calls `buildRepos(client)` to get a
+                              caller-shaped repo set, runs `fn(repos)`,
+                              COMMITs on success, and ROLLBACKs
+                              (swallowing a rollback-on-a-dead-connection
+                              failure rather than letting it mask the
+                              original error) on failure - always
+                              releasing the client
+  trust-tier.ts               `TRUST_TIERS`/`TrustTier` (design.md D5a) -
+                              the three-value trust-tier vocabulary,
+                              needed verbatim by BOTH `registry/` (which
+                              stores/validates it, D5a/task 2.5) and
+                              `scheduler/` (which gates on it, task 4.1a)
+                              with neither depending on the other
+                              (ADR-0007's fixed dependency direction has
+                              `scheduler/` depend on `registry/`, never
+                              the reverse) - `shared/` is the only place
+                              both can pull the same three literal values
+                              from without inverting that direction or
+                              coupling the two modules directly
+```
+
+**Why `database/` earns cross-cutting status but domain modules'
+`database/` subdirectories (schema.sql, that module's own repositories)
+do not move here.** `shared/database/` holds ONLY the pool/transaction
+*mechanism* - it has no schema, no domain repositories, no SQL of its own.
+Each database-owning module keeps its own `database/schema.sql` and its
+own `repositories/` exactly as ADR-0002/ADR-0006/this ADR's point 2
+already specify; it now additionally imports the *mechanism* pieces
+(`createPool`, `Queryable`, `withTransaction`) from `shared/database/`
+instead of redefining them. Concretely: `core/database/transactions.ts`'s
+public `withTransaction(pool, fn) -> CoreRepos` and `registry/database/
+transactions.ts`'s public `withRegistryTransaction(pool, fn) ->
+RegistryRepos` both keep their existing, module-specific signatures and
+repo shapes - they are now thin wrappers that call `shared/database/`'s
+generic `withTransaction` with their own `buildRepos` callback, rather
+than each reimplementing the BEGIN/COMMIT/ROLLBACK/error-listener
+mechanics by hand. `core/`'s repositories keep requiring `PoolClient`
+specifically (a deliberate ADR-0002 constraint: everything in `core/`
+runs inside a transaction `core/` itself hands out) - `Queryable` is used
+by `registry/` (and, prospectively, `workflow-store/`), not retrofitted
+onto `core/`'s existing repositories, since `PoolClient` already
+structurally satisfies `Queryable` wherever a caller needs one.
+
+**Why `trust-tier` earns cross-cutting status but `registry/`'s other
+enums (`MATERIALIZATION_COST_CLASSES`, `NestingTransport`) do not move
+here.** Only `TRUST_TIERS`/`TrustTier` was found duplicated across two
+modules; the other two enums exist in exactly one place
+(`registry/constants.ts`) with no second copy anywhere, so moving them
+would violate this section's own closed-set rule (no cross-cutting
+concern, no reason to be in `shared/`). `registry/constants.ts` and
+`scheduler/trust.ts` both now import `TRUST_TIERS`/`TrustTier` from
+`shared/` and re-export it through their own module's existing public
+surface (so no importer of either module's barrel needs to change) -
+`scheduler/trust.ts` keeps its own `isTrustEligibleForOptimization` logic
+(that function is not a duplicate of anything and stays exactly where
+ADR-0007 already put it).
 
 **4. Cross-module imports go through barrels only.** A module may import
 another module *only* via that module's `index.ts` - never a deep path into
@@ -184,6 +274,19 @@ files and matches the existing Vitest `include` pattern (ADR-0009).
   module's public surface becomes an explicit, reviewable artifact.
 - `shared/` carries a permanent risk of erosion; the closed-set rule above
   is the control, and it depends on review actually enforcing it.
+- (Revision, `docs/impl-plans/0008-shared-database-consolidation.md`)
+  `core/database/connection-pool.ts` and `registry/database/
+  connection-pool.ts` are both removed - `createPool`/`Queryable` now live
+  only in `shared/database/`. `core/database/transactions.ts`'s
+  `withTransaction` and `registry/database/transactions.ts`'s
+  `withRegistryTransaction` keep their existing public signatures/repo
+  shapes but are now thin wrappers over `shared/database/`'s generic
+  version - `registry/`'s copy gains the tolerant-rollback/error-listener
+  handling `core/`'s copy already had, closing a real robustness gap the
+  two independent copies had silently diverged on. `registry/constants.ts`
+  and `scheduler/trust.ts` both now source `TRUST_TIERS`/`TrustTier` from
+  `shared/trust-tier.ts` rather than each defining their own copy of the
+  same three values.
 
 ## Alternatives considered
 

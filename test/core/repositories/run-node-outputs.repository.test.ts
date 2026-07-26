@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../../src/core/index.js";
 import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
+import { resetWorkflowRunTables } from "../../helpers/reset.js";
 
 // TC-3/TC-4 groundwork (docs/impl-plans/0006-interpreter-plain-steps.md):
 // RunNodeOutputsRepo is the table `{from:"step"}` bindings resolve against
@@ -19,9 +20,7 @@ describe("RunNodeOutputsRepo", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query(
-      "TRUNCATE executions, run_node_outputs, workflow_runs RESTART IDENTITY CASCADE",
-    );
+    await resetWorkflowRunTables(tp.pool);
     const created = await withTransaction(tp.pool, (repos) =>
       repos.workflowRuns.create({ spec: {}, input: {} }),
     );

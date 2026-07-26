@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../../src/core/index.js";
 import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
+import { resetSessionTables } from "../../helpers/reset.js";
 
 // SessionLogRepo.append/deleteAfter/listBySession, exercised at the repo
 // level - composed behavior (appendEntry/rewindSession) is covered in
@@ -17,7 +18,7 @@ describe("SessionLogRepo", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE session_log, session_pointer");
+    await resetSessionTables(tp.pool);
   });
 
   it("appends an entry at the given sequence", async () => {

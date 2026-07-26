@@ -1,12 +1,8 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServiceImagesRepo } from "../../../src/registry/repositories/service-images.repository.js";
-import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
+import type { TestPostgres } from "../../helpers/postgres.js";
+import { resetRegistryTables, startRegistryPostgres } from "../../helpers/registry-postgres.js";
 import { DIGEST, HARDWARE_REQUIREMENTS, OCI_REF, OPENAPI_SPEC } from "../fixtures.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REGISTRY_SCHEMA_PATH = path.join(__dirname, "../../../src/registry/database/schema.sql");
 
 // TC-2 (docs/impl-plans/0007-registry.md): D5a's "register never touches
 // trust" rule, verified in both directions.
@@ -14,7 +10,7 @@ describe("ServiceImagesRepo", () => {
   let tp: TestPostgres;
 
   beforeAll(async () => {
-    tp = await startTestPostgres({ schemaPath: REGISTRY_SCHEMA_PATH });
+    tp = await startRegistryPostgres();
   }, 60_000);
 
   afterAll(async () => {
@@ -22,7 +18,7 @@ describe("ServiceImagesRepo", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE function_capabilities, service_images RESTART IDENTITY CASCADE");
+    await resetRegistryTables(tp.pool);
   });
 
   it("upsert on a new digest inserts with trust_tier='unverified'", async () => {

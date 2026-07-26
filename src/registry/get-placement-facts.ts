@@ -1,4 +1,4 @@
-import type { Queryable } from "./database/connection-pool.js";
+import type { Queryable } from "../shared/index.js";
 import {
   type FunctionCapabilityRow,
   type PlacementFacts,

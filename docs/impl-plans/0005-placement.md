@@ -558,6 +558,15 @@ immediately after these fixes: clean typecheck, clean lint, 133/133 tests
 passing across 21 files (unchanged count - both fixes were internal-shape
 changes with no new test needed, and no existing test needed updating).
 
+**Pointer forward (docs/impl-plans/0008-shared-database-consolidation.md):**
+this section's `scheduler/trust.ts` (`TRUST_TIERS`/`TrustTier` as an
+object map keyed by `UNVERIFIED`/`CONFORMANCE_PASSED`/`PRODUCTION_PROVEN`)
+was later unified with `registry/`'s independent copy of the same
+vocabulary into `shared/trust-tier.ts` (an array/tuple, not an object
+map) - 0008 for the full account. This paragraph is a pointer only; the
+text above is left as this package's own historical record of what it
+actually built at the time.
+
 ## Review notes
 
 Compared against the agreed plan (Phase 1) and agreed test design

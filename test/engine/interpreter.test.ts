@@ -11,6 +11,7 @@ import {
 import { ERROR_IDS, FatalError } from "../../src/shared/index.js";
 import type { WorkflowSpec } from "../../src/workflow-spec/index.js";
 import { type TestPostgres, startTestPostgres } from "../helpers/postgres.js";
+import { resetExecutionAndWorkflowRunTables } from "../helpers/reset.js";
 
 // A -> B -> C dependency chain, exercising both the `dependsOn` escape
 // hatch (D8a) and inferred `{from:"step"}` dependencies (D8) together on
@@ -54,9 +55,7 @@ describe("engine interpreter (plain-step dependency graph)", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query(
-      "TRUNCATE executions, checkpoints, run_node_outputs, workflow_runs RESTART IDENTITY CASCADE",
-    );
+    await resetExecutionAndWorkflowRunTables(tp.pool);
   });
 
   async function executionStatuses(runId: number): Promise<Record<string, string>> {

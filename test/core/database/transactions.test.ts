@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../../src/core/index.js";
 import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
+import { resetExecutionTables } from "../../helpers/reset.js";
 
 // TC-6: withTransaction's atomicity guarantee, generalized beyond
 // claim/complete's own use of it (ADR-0002) - matters because session/ and
@@ -17,7 +18,7 @@ describe("core.withTransaction", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE executions, checkpoints, waits RESTART IDENTITY");
+    await resetExecutionTables(tp.pool);
   });
 
   it("commits writes from both repos together on success", async () => {

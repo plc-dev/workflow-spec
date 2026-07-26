@@ -12,6 +12,7 @@ import {
   resolvePlacement,
 } from "../../src/scheduler/index.js";
 import { type TestPostgres, startTestPostgres } from "../helpers/postgres.js";
+import { resetPlacementTables } from "../helpers/reset.js";
 
 describe("scheduler/placement", () => {
   let tp: TestPostgres;
@@ -25,7 +26,7 @@ describe("scheduler/placement", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE placement, placement_access RESTART IDENTITY");
+    await resetPlacementTables(tp.pool);
   });
 
   // TC-2: a resolver miss is never an error - the affinity-is-always-an-

@@ -93,7 +93,45 @@ stating its purpose, whether it's required or optional, and its default if
 optional. Updated in the same change that adds/removes/changes a variable
 in `config.ts` - never allowed to drift out of sync.
 
-## 6. Module structure and naming - see ADR-0012
+## 6. Check for deduplication potential on every new instance
+
+Whenever Phase 3 (Implement) introduces code that repeats a pattern
+already present elsewhere in the codebase (a connection/transaction
+helper, a validation routine, a row-mapping shape, a test-fixture/reset
+block, an enum/vocabulary, etc.), `/impl-package` (or any agent acting
+under it) MUST:
+
+1. **Scan for the existing instance(s)** of the pattern before finishing
+   the package - not just within the new module, but across `src/` and
+   `test/` generally (mirrors the six-track local-review scan's
+   "duplication" track, but done proactively during implementation rather
+   than only reactively during review).
+2. **Surface it explicitly to the repo owner** rather than silently
+   picking a side (leave the duplication, or unilaterally extract it) -
+   state which locations duplicate what, and what consolidating them
+   would require (e.g. a new `src/shared/` entry, which is itself an
+   ADR-0012 amendment the repo owner must approve, not something
+   `/impl-package` decides on its own initiative).
+3. Wait for the repo owner's explicit direction on whether to consolidate
+   now, defer it, or leave the two copies independent (some duplication is
+   deliberate - e.g. two modules on opposite sides of a fixed dependency
+   direction that happen to need the same literal vocabulary - and
+   consolidating it would be the wrong move; see ADR-0012's `trust-tier`
+   revision for a worked example of surfacing this correctly).
+
+**Why tiered, not immediate, consolidation**: a *second* occurrence of a
+pattern is real evidence of duplication risk (drift, a missed robustness
+fix landing in only one copy, etc.) but does not by itself justify a new
+`src/shared/` entry or a cross-module refactor on every single instance -
+that is exactly the "closed set" discipline ADR-0012 §3 already imposes on
+`shared/` (it would be as easy to erode via a hundred small "since we're
+here anyway" extractions as via a hundred grab-bag utility additions).
+Flagging it at each new instance, and letting the repo owner decide when
+enough instances (or enough risk) have accumulated to warrant an actual
+consolidation pass, is the intended mechanism - not silence, and not
+unilateral action either.
+
+## 7. Module structure and naming - see ADR-0012
 
 Module-internal directory structure (`database/`, `repositories/` +
 `repositories/queries/`, `domain/`), the cross-cutting `src/shared/`

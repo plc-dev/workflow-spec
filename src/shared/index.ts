@@ -2,6 +2,7 @@
 // (config, errors, observability) - this barrel is the only way another
 // module may import from it.
 export { config, type Config, parseConfig } from "./config.js";
+export { createPool, type Queryable, withTransaction } from "./database/index.js";
 export {
   DEFAULT_ERROR_MESSAGES,
   ERROR_IDS,
@@ -12,3 +13,4 @@ export {
   RetryableError,
 } from "./errors.js";
 export { logger, REDACT_CONFIG } from "./observability/index.js";
+export { TRUST_TIERS, type TrustTier } from "./trust-tier.js";
