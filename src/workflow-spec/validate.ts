@@ -3,7 +3,7 @@
 // YAML profile itself is a future dsl-compiler/'s job, not this
 // package's - see docs/impl-plans/0004-workflow-spec-schema.md).
 
-import { Ajv2020, type ErrorObject } from "ajv/dist/2020.js";
+import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 import { WORKFLOW_SPEC_JSON_SCHEMA } from "./constants.js";
 
 export interface ValidationError {
@@ -22,12 +22,27 @@ export interface ValidationResult {
  * guard below. */
 const ERROR_ID_MAX_NESTING_DEPTH_EXCEEDED = "workflow-spec.validate.max_nesting_depth_exceeded";
 
-// Compiled once at module load - validate() itself is a cheap, synchronous
-// call with no scheduling/registry/placement involvement (D10's own
-// framing for compute applies equally well to schema validation: this is
-// pure, in-memory, and free to call).
-const ajv = new Ajv2020({ allErrors: true, strict: true });
-const validateFn = ajv.compile(WORKFLOW_SPEC_JSON_SCHEMA);
+// Compiled lazily, on the first call to validate() - not at module load.
+// Local-review fix: this module is re-exported from `workflow-spec/`'s
+// barrel, which other modules (e.g. `engine/`, via `workflow-spec/
+// binding-refs.ts`'s promotion) import at runtime for reasons that have
+// nothing to do with schema validation. An eager, module-load-time
+// `ajv.compile(...)` meant every such importer paid this compile (and
+// inherited its crash surface) on process startup, even when nothing it
+// does ever calls `validate()`. Memoized here so the cost/risk is paid
+// only by an actual caller of `validate()`, exactly once. validate()
+// itself remains a cheap, synchronous call once compiled - no
+// scheduling/registry/placement involvement (D10's own framing for
+// `compute` applies equally well to schema validation: pure, in-memory,
+// free to call after this one-time compile).
+let cachedValidateFn: ValidateFunction | undefined;
+function getValidateFn(): ValidateFunction {
+  if (!cachedValidateFn) {
+    const ajv = new Ajv2020({ allErrors: true, strict: true });
+    cachedValidateFn = ajv.compile(WORKFLOW_SPEC_JSON_SCHEMA);
+  }
+  return cachedValidateFn;
+}
 
 function toValidationError(error: ErrorObject): ValidationError {
   return {
@@ -53,6 +68,7 @@ function toValidationError(error: ErrorObject): ValidationError {
  * instead.
  */
 export function validate(doc: unknown): ValidationResult {
+  const validateFn = getValidateFn();
   let valid: boolean;
   try {
     // The schema has no $async keyword, so validateFn(doc) is always

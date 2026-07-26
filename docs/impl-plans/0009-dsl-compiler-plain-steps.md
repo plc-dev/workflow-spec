@@ -2,8 +2,7 @@
 
 ## Status
 
-`plan-agreed` (test-design gate collapsed into this same approval - see
-"Test design"'s own rationale)
+`reviewed`
 
 ## Scope
 
@@ -337,8 +336,250 @@ are therefore presented together here for one combined agreement.
 
 ## Implementation notes
 
-_(filled in during Phase 3)_
+Built exactly as planned: `src/dsl-compiler/{index,constants,compile,
+restricted-yaml,semantic-validation,registry-validation}.ts` +
+`domain/compile-result.ts`. Added `yaml` (`^2.9.0`) as a direct runtime
+dependency (was already present transitively via `testcontainers`/
+`vite`). No `database/` subdirectory - this module owns no schema/pool of
+its own, per plan. No new `ERROR_IDS`/`.example.env` entries - `compile()`
+reports every expected rejection as data (`CompileError`), mirroring
+`workflow-spec/validate()`'s own never-throws contract; no new
+environment variable was introduced.
+
+**Deviations from the plan - none structural.** Two small additions
+beyond what the plan doc explicitly enumerated, both narrow and consistent
+with the plan's own intent:
+
+1. `parseRestrictedYaml` also catches and reports ordinary YAML *syntax*
+   errors (`doc.errors` from the `yaml` package) via the same
+   `restricted_yaml_violation` code, rather than letting a malformed
+   document reach the profile-check step with a broken/partial AST. The
+   plan doc's own TC list didn't enumerate this case explicitly, but it
+   falls directly out of the same "never throws for an invalid document"
+   contract every other stage already commits to - a plain syntax error
+   is just as much "this string is not a valid restricted-YAML document"
+   as an anchor/alias is. Covered by an added test in
+   `restricted-yaml.test.ts` beyond the plan's TC-1..TC-4.
+2. `registry-validation.ts`'s `collectAllSteps` and
+   `semantic-validation.ts`'s own tree walk started out as two
+   independent, small (~10-line) recursive descents over the same `Node`
+   union - one collecting a flat `Step[]`, the other additionally
+   tracking scope paths for the visibility rule. Flagged per
+   implementation-best-practices.md #6 rather than resolved unilaterally;
+   **the repo owner's direction was to consolidate now.** Extracted a new
+   `src/dsl-compiler/node-walk.ts` (`walkNodes(nodes, scope, visitor)`,
+   `ScopePath`, `NodeVisitor`) owning ONLY the traversal shape (which node
+   comes next, what scope it's in, when a branch case/map body has
+   finished being walked) via five optional callbacks
+   (`onStep`/`onBranch`/`onCaseWalked`/`onMap`/`onBodyWalked`). Both
+   callers now build on it: `registry-validation.ts`'s `collectAllSteps`
+   supplies only `onStep`; `semantic-validation.ts` supplies all five to
+   additionally record ids/references at each step. Re-ran the full test
+   suite after the refactor - all 19 of this package's tests and all
+   225/225 repo-wide tests still pass unchanged, confirming this was a
+   pure internal refactor with no behavior change.
+
+**TC-15 implemented against a mock pool, not testcontainers.** The plan
+labeled TC-15 as testcontainers-backed; it's implemented in
+`compile.test.ts` (pure) instead, against a `vi.fn()`-mocked `Queryable`
+whose call count is asserted to be zero - a strictly more precise proof
+of "the registry stage never ran" than counting rows/queries against a
+real database would have been, and avoids spinning up a container for a
+property that has nothing to do with real Postgres semantics. Not a scope
+change - the same correctness property (short-circuit-on-semantic-error)
+is verified either way.
+
+**Digest extraction.** `Step.service` is always `<repo>@<alg>:<hex>`
+(schema-enforced); `registry-validation.ts`'s `digestFromServiceRef`
+strips everything up to and including the `@`, matching `registry/`'s own
+bare `<alg>:<hex>` primary key (confirmed against
+`test/registry/fixtures.ts`'s `DIGEST` shape) - not a new decision, a
+mechanical consequence of the two schemas already in place.
+
+**Test results.** 19/19 new tests passing: 15 pure (`restricted-
+yaml.test.ts` - 5, one beyond the planned TC-1..TC-4; `semantic-
+validation.test.ts` - 6, TC-7..TC-11 plus one additional "referencing
+outward is always allowed" case; `compile.test.ts` - 4, TC-5/TC-6 plus
+TC-15's non-registry half and an extra restricted-YAML-short-circuits-
+before-schema case) plus 4 testcontainers-backed in `compile.
+integration.test.ts` (TC-12..TC-14 and TC-16, with TC-12 asserting BOTH
+steps' unregistered digests are reported together, not just the first).
+Full repo-wide suite: 225/225 passing across 40 files (was 206/36 before
+this package), `tsc --noEmit` clean, `biome check` clean.
 
 ## Review notes
 
-_(filled in during Phase 4)_
+Compared against the agreed plan (module layout, interfaces, data flow)
+and the agreed test design (TC-1..TC-16):
+
+- **Scope.** All three Scope items (5.2, 5.3, 5.6a) are covered by real
+  code and real tests, not just documentation - `tasks.md` updated
+  accordingly with file/test pointers.
+- **Module layout.** Matches the plan exactly: `index.ts`, `constants.ts`,
+  `domain/compile-result.ts`, `restricted-yaml.ts`,
+  `semantic-validation.ts`, `registry-validation.ts`, `compile.ts`. No
+  `database/` directory, as planned (this module owns no schema/pool).
+- **Interfaces.** `compile(input, { registryPool })` and `CompileResult`/
+  `CompileError`/`CompileErrorCode` match the plan's signatures exactly.
+- **Data flow.** The four-stage pipeline (parse -> schema -> semantic ->
+  registry) with short-circuiting matches the plan; verified directly by
+  `compile.test.ts`'s short-circuit assertions (mock pool never called
+  once an earlier stage fails).
+- **Test design.** Every planned test case (TC-1..TC-16) has a
+  corresponding test; two deviations recorded in Implementation notes
+  (TC-15 via mock rather than testcontainers; the extra plain-YAML-
+  syntax-error case beyond the planned TC-1..TC-4) are both narrow,
+  don't change what's being verified, and are called out rather than
+  silently introduced.
+- **Best practices.** No inlined SQL (this module issues none directly -
+  all registry I/O goes through `registry/getEntry`), no magic strings
+  (`CompileErrorCode`/`COMPILE_ERROR_CODES`/`YAML_MERGE_KEY` all named),
+  structured-error taxonomy correctly NOT used for expected rejections
+  (mirrors `workflow-spec/validate()`'s own precedent, called out
+  explicitly in the plan rather than assumed), barrel-only surface
+  (`index.ts` is re-exports only), no filename abbreviations. One
+  duplication instance flagged per practice #6 (the two small tree
+  walks in `semantic-validation.ts`/`registry-validation.ts`) - the repo
+  owner directed consolidation, done via the new `node-walk.ts` (see
+  Implementation notes); re-verified full-suite green after the refactor.
+- **Full-suite regression.** `tsc --noEmit` clean, `biome check .` clean,
+  225/225 tests passing across 40 files (19 new, 0 regressions in the
+  206 pre-existing tests) - verified both before and after the
+  `node-walk.ts` consolidation.
+
+**Post-review fixes (local code review, `/local-review-uncommitted`).** A
+six-track review (security/performance/business-logic/deploy-safety/
+duplication/dead-code) against the full uncommitted diff surfaced 4 real
+issues, all fixed on the repo owner's direction (one false positive - a
+"stray probe test file" claim from the deploy-safety track - was checked
+against `git status`/the filesystem and found not to exist; discarded):
+
+1. **Validation bypass (business-logic/security).**
+   `registry-validation.ts`'s function check used `step.function in
+   entry.functions`, which also matches inherited `Object.prototype` keys
+   (`entry.functions` is a plain object literal) - a step naming
+   `function: "constructor"` (or `toString`/`valueOf`/etc.) passed
+   validation against ANY registered digest regardless of what it
+   actually declares, defeating D12's "registry is sole source of truth"
+   check. Fixed with `Object.hasOwn(entry.functions, step.function)`.
+   Regression test: `compile.integration.test.ts`'s new "rejects a step
+   naming an Object.prototype key as its function" case.
+2. **Missing sessionState.fallback walk (business-logic).**
+   `validateStepReferences` walked `spec.steps` and `spec.outputs` but
+   never `spec.sessionState[*].fallback`, itself a full `Binding` per
+   D8a - a `{from:"step",...}` reference placed there escaped both the
+   unresolved-reference and D8c's internal-id-visibility checks. Fixed by
+   walking every `sessionState` key's `fallback` at root scope (a
+   session-state seed is document-level, so it must never reach into a
+   branch-case/map-body's internal ids). Regression tests: two new cases
+   in `semantic-validation.test.ts`.
+3. **N+1 registry round-trips (performance).**
+   `validateServiceReferences` called `getEntry` (itself 2 sequential
+   queries) once per step with no deduplication - a document with many
+   steps sharing one digest repeated the same round-trips redundantly.
+   Fixed with an in-memory `Map<string, RegistryEntry | null>` cache keyed
+   by digest, scoped to one `validateServiceReferences` call. A further
+   batched `WHERE digest = ANY($1)` repo method would need changes inside
+   `registry/` itself - noted as a possible future follow-up, not done
+   here (out of this package's scope; the in-module cache already removes
+   the redundant-round-trips risk for the common case).
+4. **Cross-module duplication (duplication track).**
+   `semantic-validation.ts`'s own recursive `{from:"step"}`-reference walk
+   independently duplicated `engine/dependency-graph.ts`'s
+   `collectStepBindingIds` (same three cases: `compute.using` recursion,
+   `itemResource.itemId` recursion, `step` binding as the base case) - a
+   drift risk if a future nesting `Binding` kind were added and only one
+   copy learned about it. Per the repo owner's explicit direction (this
+   duplication crosses an already-`reviewed` prior package's boundary, so
+   it was flagged rather than resolved unilaterally, per
+   implementation-best-practices.md #6), **promoted** the shared walk into
+   `workflow-spec/binding-refs.ts` (`collectStepBindingIds`) - the one pure
+   module both `engine/` and `dsl-compiler/` already depend on (ADR-0007).
+   `engine/dependency-graph.ts` now imports and re-exports it (its own
+   existing `engine/index.ts` surface is unchanged - `computeStepDependencies`
+   still behaves identically); `semantic-validation.ts`'s
+   `walkBindingForStepRefs` now calls it instead of re-implementing the
+   walk. Re-ran `test/engine` + `test/dsl-compiler` + the full repo suite
+   after this refactor - all green, confirming no behavior change.
+
+Also trimmed, per the dead-code track's finding, `dsl-compiler/index.ts`'s
+barrel: `walkNodes`/`NodeVisitor`/`ScopePath` (from `node-walk.ts`) and
+`validateServiceReferences` (from `registry-validation.ts`) had no
+consumer outside `dsl-compiler/` itself - removed from the public surface
+(still reachable via relative import within the module; ADR-0012's
+barrel rule governs cross-module imports, not intra-module ones).
+
+**Post-fix full-suite result:** 228/228 tests passing across 40 files (3
+new regression tests added: 1 in `compile.integration.test.ts`, 2 in
+`semantic-validation.test.ts`), `tsc --noEmit` clean, `biome check .`
+clean.
+
+**Second local-review round (post-first-round fixes, `/local-review-uncommitted`).**
+A fresh six-track pass over the still-fully-uncommitted diff (nothing had
+been committed yet) surfaced 3 more issues; 2 fixed, 1 tried-then-reverted
+after implementation revealed it was actually wrong:
+
+1. **Ajv-compile-at-import-time coupling (deploy safety) - fixed.**
+   Promoting `collectStepBindingIds` into `workflow-spec/`'s barrel gave
+   `engine/dependency-graph.ts` its first-ever RUNTIME (not type-only)
+   import of `workflow-spec/index.js`. That barrel re-exports `validate`,
+   whose module (`validate.ts`) compiled its ajv validator eagerly at
+   module load - so every future worker process importing `engine/` would
+   now pay that compile (and inherit its crash surface) on startup, even
+   though nothing in `engine/` calls `validate()`. Fixed by making
+   `workflow-spec/validate.ts`'s ajv compilation lazy (memoized on first
+   `validate()` call, via `getValidateFn()`) - the cost/risk is now paid
+   only by an actual caller, not every barrel importer. No behavior
+   change to `validate()`'s own contract.
+2. **Remaining Step-level duplication (business logic/duplication) -
+   fixed.** The FIRST review round's fix consolidated only the
+   nested-Binding half of "which step ids does a Step reference"
+   (`collectStepBindingIds`) - `semantic-validation.ts`'s `onStep` still
+   independently re-derived the Step-level half (`dependsOn` ∪ `reads`)
+   that `engine/dependency-graph.ts`'s `computeStepDependencies` also
+   computes. Promoted a second helper, `collectStepReferenceIds(step)`,
+   alongside `collectStepBindingIds` in `workflow-spec/binding-refs.ts`;
+   `computeStepDependencies` now wraps it with its own `Set` dedup (kept
+   there deliberately - it's a dependency-graph-specific need, not shared
+   by `semantic-validation.ts`, which wants one reference site per
+   occurrence, not deduplicated).
+3. **Service-reference repo/host validation (security) - tried, then
+   REVERTED.** The review flagged that `registry-validation.ts` compares
+   only the digest suffix of `step.service` against the registry, never
+   its repo/host portion, and suggested comparing it against the
+   registered entry's own `ociRef`. Implemented this and immediately hit
+   4 failing tests: a `service` naming a short repo (`svc@sha256:...`)
+   legitimately does not textually equal the registry's own
+   fully-qualified `ociRef` (`oci://registry.example.com/svc@sha256:...`)
+   - and per D8c/D12, the DIGEST is what's authoritative precisely so
+   that host/mirror/short-name differences don't matter; a puller that
+   verifies content against the digest already gets the real safety
+   property the review's SSRF/credential-exposure concern was gesturing
+   at. Enforcing textual repo/host equality would have both broken
+   legitimate short-name references AND represented a real design
+   decision (what identifies a service reference: digest alone, or
+   digest+host?) that no ground-truth doc (ADR/design.md/D12) actually
+   makes - D12 explicitly still lists the OCI byte-store product/topology
+   as an open, deferred question. Reverted rather than force a
+   design-level judgment call unilaterally under review pressure; left as
+   a documented, known non-fix (comment in `digestFromServiceRef`) rather
+   than silently dropped. **Flagged as a real open question for a future
+   package** (whichever eventually builds the actual puller/`apps/worker`
+   dispatch path) rather than a new `tasks.md` item today, since inventing
+   the answer now would pre-empt a decision this package has no mandate
+   to make.
+
+**Post-second-round full-suite result:** 228/228 tests still passing
+(unchanged count - the two fixes were behavior-preserving refactors/lazy-
+init, and the reverted attempt left no trace), `tsc --noEmit` clean,
+`biome check .` clean.
+
+- **Follow-ups spun off:** none as new `tasks.md` items - 5.7/5.8/5.6b-e
+  etc. remain exactly as scoped out in this doc's own "Explicitly NOT in
+  scope" section. One genuine open question surfaced by the second review
+  round (whether a `Step.service` reference's repo/host should be
+  validated against the registry's own `ociRef`, or whether digest alone
+  is the intended sole identity) is left as a documented comment in
+  `registry-validation.ts`, not a `tasks.md` item - it belongs to whichever
+  future package first builds a real puller/dispatch path against
+  `ociRef`, not to this compile-time-validation-only package.

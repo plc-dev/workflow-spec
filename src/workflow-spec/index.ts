@@ -27,3 +27,5 @@ export type {
 
 export { validate } from "./validate.js";
 export type { ValidationError, ValidationResult } from "./validate.js";
+
+export { collectStepBindingIds, collectStepReferenceIds } from "./binding-refs.js";

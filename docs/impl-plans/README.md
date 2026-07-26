@@ -66,6 +66,6 @@ Each plan document carries:
 | 0006 | Execution interpreter: plain-step dependency-graph execution | reviewed | 6.2a (new, split from 6.2) |
 | 0007 | Registry: `registry/`'s own metadata-index database | reviewed | 2.1, 2.1a, 2.1b, 2.1c, 2.2, 2.5, 2.8, 2.10 |
 | 0008 | `shared/database/` + `shared/trust-tier.ts` consolidation (ADR-0012 amendment, cross-cutting refactor) | reviewed | none (infra/process only) |
-| 0009 | DSL compiler: `dsl-compiler/` module (restricted-YAML parse, schema validate, registry-checked compile) | plan-agreed | 5.2, 5.3, 5.6a |
+| 0009 | DSL compiler: `dsl-compiler/` module (restricted-YAML parse, schema validate, registry-checked compile) | implemented | 5.2, 5.3, 5.6a |
 </content>
 </invoke>
