@@ -61,6 +61,6 @@ Each plan document carries:
 | 0001 | Durable core: `core/` schema + `engine/` claim/complete primitives | reviewed | 6.1a (split from 6.1) |
 | 0002 | Durable sleep: `waits` table, `signal_wait()`, LISTEN/NOTIFY `WakeListener` | reviewed | 6.1b |
 | 0003 | Session log: `session_log`/`session_pointer` tables + `session/` module (append, rewind, replay) | reviewed | 3.1, 3.10 |
-| 0004 | IR schema: `ir/` module (types, JSON Schema, `validate()`) | draft | 5.1 |
+| 0004 | IR schema: `ir/` module (types, JSON Schema, `validate()`) | reviewed | 5.1 |
 </content>
 </invoke>

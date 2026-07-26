@@ -2,7 +2,7 @@
 
 ## Status
 
-`draft`
+`reviewed`
 
 ## Scope
 
@@ -148,14 +148,18 @@ this package makes:**
   regex is the one line that needs to change.
 - **How should `compute`'s expression and URN-shaped strings (`static.ref`,
   the dataset-URN pattern) be typed in TypeScript, given `logic/`/`urn/`
-  don't exist yet?** Resolved: plain `Record<string, unknown>` for a
-  `compute` expression, plain `string` for every URN-shaped field. Noted
-  explicitly (not silently assumed) as an interim typing choice per
+  don't exist yet?** Resolved: named **placeholder type aliases** -
+  `LogicExpression`, `Urn`, `JsonPointer`, `OciDigestRef` - each currently
+  aliased to `Record<string, unknown>`/`string`, rather than inlining
+  `unknown`/`string` directly into `Binding`/`Step`'s own field types.
+  Noted explicitly (not silently assumed) as an interim typing choice per
   ADR-0003's own "MAY depend on" phrasing (not "MUST") - `ir/` is
-  buildable and useful without either pure module existing yet, and
-  tightening these types later (once `logic/`/`urn/` land) is a
-  non-breaking refinement of an already-`unknown`/`string`-typed field,
-  not a structural change to `Binding`'s discriminated union.
+  buildable and useful without either pure module existing yet. The
+  placeholder-alias indirection means tightening these later (once
+  `logic/`/`urn/` land) is a one-line change to each alias's own
+  definition, not a hunt through every interface that references it - a
+  smaller, more localized refinement than editing `Binding`/`Step`
+  directly.
 - **Does this package enforce `yields` being required when a case/body
   has more than one step (D8c's own stated rule)?** No - carrying forward
   the archived schema's own documented limitation verbatim: JSON Schema
@@ -191,6 +195,11 @@ src/ir/                              (NEW top-level module - ADR-0007)
     session-state.ts                 (new) SessionStateDeclaration
     write-target.ts                  (new) SessionWriteTarget
     secret-ref.ts                    (new) SecretRef
+    placeholder-types.ts             (new) LogicExpression, Urn,
+                                     JsonPointer, OciDigestRef - named
+                                     stand-ins for logic/'s and urn/'s
+                                     eventual real types (see Open
+                                     questions)
   schema/
     workflow-spec.schema.json        (new) promoted from
                                      archive/dsl/schema/, extended with
@@ -222,6 +231,18 @@ same "additive, no shared-file churn" shape 0002/0003 both had.
 ### Interfaces (signatures)
 
 ```ts
+// src/ir/domain/placeholder-types.ts
+// Named stand-ins for types that will eventually live in the future pure
+// modules `logic/` (D10's JSON-Logic evaluator) and `urn/` (D8a/D13's URN
+// parser) - neither exists yet (ADR-0003: ir/ "MAY depend on" them, not
+// "MUST"). Each alias is currently just unknown/string; the indirection
+// means tightening these later is a one-line change here, not a hunt
+// through every interface that references one.
+export type LogicExpression = Record<string, unknown>; // D10 compute expr
+export type Urn = string;                                // D8a dataset URN
+export type JsonPointer = string;                        // D16 itemResource path
+export type OciDigestRef = string;                       // D8c digest-pinned service ref
+
 // src/ir/domain/binding.ts
 export type Binding =
   | StaticBinding
@@ -233,21 +254,20 @@ export type Binding =
   | ComputeBinding
   | ItemResourceBinding;
 
-export interface StaticBinding { from: "static"; ref: string; }
+export interface StaticBinding { from: "static"; ref: Urn; }
 export interface SessionBinding { from: "session"; key: string; }
 export interface RequestBinding { from: "request"; param: string; }
 export interface StepBinding { from: "step"; id: string; output: string; }
 export interface ItemBinding { from: "item"; }
 export interface LiteralBinding { literal: unknown; }
 export interface ComputeBinding {
-  compute: Record<string, unknown>; // JSON-Logic expression (D10); typed
-                                     // loosely until logic/ exists
+  compute: LogicExpression; // D10; placeholder until logic/ exists
   using?: Record<string, Binding>;
 }
 export interface ItemResourceBinding {
   from: "itemResource";
-  itemId: Binding; // D16: typically request-scoped, but any Binding
-  path: string;     // D16: RFC 6901 JSON Pointer (provisional grammar)
+  itemId: Binding;       // D16: typically request-scoped, but any Binding
+  path: JsonPointer;      // D16: provisional grammar - see Open questions
 }
 
 // src/ir/domain/session-state.ts
@@ -265,7 +285,7 @@ export interface SecretRef { scope: "writer" | "user"; name: string; }
 // src/ir/domain/node.ts
 export interface Step {
   id: string;
-  service: string; // OCI ref, always digest-pinned (D8c hard rule)
+  service: OciDigestRef; // always digest-pinned (D8c hard rule)
   function: string;
   dependsOn?: string[];
   reads?: Record<string, Binding>;
@@ -434,8 +454,175 @@ code fails to compile against it.
 
 ## Implementation notes
 
-_(filled in during Phase 3)_
+Built exactly as planned, with one directed change from the plan-agreement
+round-trip (see "Test design" note above) and a couple of small mechanical
+findings surfaced while writing the code - neither is a deviation from the
+plan's own shape:
+
+- **Placeholder types, not inlined `unknown`/`string`, per explicit
+  direction during plan approval.** `src/ir/domain/placeholder-types.ts`
+  defines `LogicExpression`, `Urn`, `JsonPointer`, `OciDigestRef` as named
+  aliases (currently `Record<string, unknown>`/`string`), and every field
+  that would otherwise have been raw `unknown`/`string`
+  (`ComputeBinding.compute`, `StaticBinding.ref`, `ItemResourceBinding.path`,
+  `Step.service`) references the alias instead. The plan document itself
+  was updated in place (Open questions, interface sketch) before writing
+  any code, so the plan and the implementation agree exactly - no
+  after-the-fact reconciliation needed.
+- **ajv's `Ajv2020` had to be imported as a named import
+  (`import { Ajv2020 } from "ajv/dist/2020.js"`), not the default import
+  the plan's own data-flow sketch implicitly assumed.** A default import
+  (`import Ajv2020 from "ajv/dist/2020.js"`) type-checks as having no
+  construct signature under this repo's `NodeNext`/`esModuleInterop`
+  tsconfig, even though `ajv`'s own `.d.ts` declares both a named class
+  export and a `export default` re-export of it - a TypeScript/Node
+  module-interop quirk specific to this dependency, not a design choice.
+  Confirmed the named import resolves to the same runtime class (both
+  compiles the same schema and validates identically) before settling on
+  it. No test depends on which import style was used, so no test
+  needed updating.
+- **`ValidationError.message` needed an explicit fallback for ajv's
+  optional `error.message`.** ajv's `ErrorObject.message` is typed
+  `string | undefined` (only absent if a custom keyword's error function
+  omits it, which never happens for this schema's own vocabulary) -
+  `toValidationError` falls back to a fixed string
+  (`"Schema validation failed with no message."`) rather than allowing
+  `undefined` to leak into `ValidationError.message`'s `string` type. Not
+  exercised by any test (ajv always supplies a message for every keyword
+  this schema uses), noted here rather than silently working around a
+  type error.
+
+All 14 planned test cases (TC-1 through TC-14) are implemented and
+passing, split across two files:
+
+- `test/ir/validate.test.ts` (46 tests): the whole-document fixture suite
+  (TC-1, ported/extended from `archive/dsl/schema/examples{,-invalid}/` -
+  6 valid + 5 invalid fixtures under `test/ir/fixtures/`, one new
+  `itemResource` example added to each side) plus TC-2 through TC-14 as
+  dedicated `describe` blocks, each comment-labeled with its TC number.
+- `test/ir/domain.test.ts` (1 test): the compile-time domain-type exercise
+  described in the plan's Test design section.
+
+`npx tsc --noEmit`, `npx biome check .`, and `npx vitest run` all pass
+clean (107/107 tests across 16 files, up from 0003's 60 - the 47 new tests
+are exactly this package's 46 `validate.test.ts` cases plus 1
+`domain.test.ts` case) - verified directly immediately before writing this
+section, not assumed. `biome check --write .` was run once to fix three
+purely mechanical formatting/import-order findings (import-statement
+ordering in `node.ts`, object-wrapping in `index.ts` and
+`validate.test.ts`) - no logic changed by that pass.
+
+`biome.json`'s `noRestrictedImports` list needed **no new entries**: that
+rule only lists *existing* cross-module relative imports (ADR-0012 §4's
+documented, hand-maintained limitation), and nothing outside `ir/` itself
+imports any of its internals yet - `ir/` has no consumer in this repo so
+far (test files import via the barrel, `../../src/ir/index.js`, exactly
+as intended). This will need a new entry the first time a future package
+(`dsl-compiler/`, `workflow-store/`, `scheduler/`, `engine/`) imports
+`ir/`'s barrel from a relative depth not already covered by an existing
+rule entry - not needed yet.
+
+No env vars were added or changed - `.example.env` needed no update
+(verified by inspection: `grep -rn "process.env" src/ir/` returns no
+matches).
+
+No follow-up tasks spun off beyond what Scope already named as explicitly
+deferred (5.2/5.3/5.9/5.10/5.11/5.12/5.13/5.13a/5.13b) - none of those were
+touched or partially started.
+
+**Post-review fixes** (from the local code review pass immediately after
+this section was first written - both within this package's own scope, no
+plan/test-design change; each is also covered by a new/strengthened test,
+not just fixed in place, mirroring 0002/0003's own posture):
+
+- **`validate()` threw an uncaught `RangeError` on an adversarially deep
+  binding-nesting chain, breaking its own documented never-throws
+  contract.** The `Binding` schema is recursive (`compute.using` and
+  `itemResource.itemId` both recurse into `#/$defs/binding`) - a small
+  (tens of KB) but deeply nested document (e.g. 5,000 nested `compute`
+  bindings) exhausted ajv's generated recursive validator's call stack, a
+  straightforward DoS vector for any future caller validating untrusted,
+  externally-authored workflow-spec documents. Fixed by wrapping
+  `validateFn(doc)` in a try/catch that converts a `RangeError`
+  specifically into an ordinary `{ valid: false, errors: [...] }` result
+  (any other thrown error still propagates, since only stack-depth
+  exhaustion is an expected/adversarial shape here, not a general
+  catch-all). Regression test: `test/ir/validate.test.ts` - "does not
+  throw on an adversarially deep binding-nesting chain - returns invalid
+  instead."
+- **`constants.ts`'s `JSON_SCHEMA_DRAFT`/`JSON_SCHEMA_ID`/
+  `JSON_POINTER_PATTERN` were hand-duplicated literals with no code path
+  connecting them to the actual schema file they described, and none of
+  the three was ever imported anywhere - dead, drift-risk code introduced
+  beyond what the plan's own file-layout sketch had named (the plan listed
+  only `CURRENT_IR_VERSION`/`JSON_SCHEMA_ID`).** Fixed by having
+  `constants.ts` itself load and parse `schema/workflow-spec.schema.json`
+  once (`IR_JSON_SCHEMA`), deriving `JSON_SCHEMA_ID` from the loaded
+  schema's own `$id` field instead of a second hardcoded copy, and
+  removing `JSON_SCHEMA_DRAFT`/`JSON_POINTER_PATTERN` entirely (both were
+  pure duplicates of values already stated once in the schema file, with
+  no consumer). `validate.ts` now imports `IR_JSON_SCHEMA` from
+  `constants.ts` instead of independently re-reading/re-parsing the file
+  itself - one file read at module load, not two. No dedicated new test -
+  this is a duplication/dead-code removal with no behavior change; every
+  existing schema-validation test still passes unchanged against the
+  now-single-sourced schema object.
+- **A related `tsc` finding surfaced while fixing the `RangeError`
+  handling, not part of the original review**: `validateFn(doc)`'s return
+  type is `boolean | Promise<unknown>` in ajv's own types (to cover
+  schemas that opt into `$async` validation), which `tsc --noEmit`
+  correctly flagged once the call was moved into a `let`-assigned
+  variable inside a `try` block. This schema has no `$async` keyword, so
+  the call is always synchronous - fixed with an explicit `as boolean`
+  cast and a comment explaining why the cast is safe, not by ignoring or
+  suppressing the type error.
+
+Re-ran `npx tsc --noEmit`, `npx biome check .`, and `npx vitest run`
+immediately after these fixes: clean typecheck, clean lint, 108/108 tests
+passing across 16 files (up from 107, the one new regression test).
 
 ## Review notes
 
-_(filled in during Phase 4)_
+Compared against the agreed plan (Phase 1, as amended during approval to
+use placeholder types) and agreed test design (Phase 2, collapsed into the
+same agreement), not a fresh read of the code in a vacuum:
+
+- Every Scope item (task 5.1) is present: `WorkflowSpec`/`Step`/`Node`/
+  `Binding` (all 8 kinds incl. `itemResource`)/`SessionStateDeclaration`/
+  `SessionWriteTarget`/`SecretRef` domain types, the promoted-and-extended
+  JSON Schema at `src/ir/schema/workflow-spec.schema.json`, and
+  `validate()` at `src/ir/validate.ts`, all re-exported through
+  `src/ir/index.ts`'s barrel.
+- The placeholder-type directive from plan approval is implemented exactly
+  as agreed: `LogicExpression`/`Urn`/`JsonPointer`/`OciDigestRef` exist as
+  named aliases in `domain/placeholder-types.ts`, and every field that
+  would otherwise have been inlined `unknown`/`string` references one.
+- All 14 agreed test cases (TC-1 through TC-14) exist and pass -
+  cross-checked against the Test design table's own file/property
+  mapping; every `describe` block in `validate.test.ts` is comment-labeled
+  with its TC number.
+- A local code review pass (`/local-review-uncommitted`) found one real
+  bug (`validate()`'s uncaught `RangeError` on adversarially deep
+  nesting, breaking its own never-throws contract) plus one duplication/
+  dead-code finding (`constants.ts`'s three hand-duplicated, unused
+  schema literals). Both were fixed, the bug with a new regression test
+  (see Implementation notes' "Post-review fixes"); the duplication fix is
+  a behavior-neutral single-sourcing change covered by the existing test
+  suite continuing to pass unchanged. The review's other four tracks
+  (security beyond the RangeError DoS angle, performance, deploy safety,
+  and the remaining business-logic checks) returned no findings - the
+  module is additive-only (no existing file was modified except
+  `package.json`'s new `ajv` dependency; `biome.json` untouched, as noted
+  above), with no shared state or existing consumer to regress.
+- Re-ran `npx tsc --noEmit`, `npx biome check .`, and `npx vitest run`
+  immediately after the post-review fixes: clean typecheck, clean lint,
+  108/108 tests passing across 16 files.
+- No scope creep: 5.2/5.3/5.9/5.10/5.11/5.12/5.13/5.13a/5.13b were not
+  touched, consistent with the plan's explicit exclusions; `logic/`/
+  `urn/` were not created (their eventual types remain placeholder
+  aliases, as agreed).
+- `tasks.md` accurately reflects reality: 5.1 marked `[x]` with a pointer
+  to the real files/tests, not just this doc.
+
+No further follow-up issues found. Package considered complete for its
+stated scope.

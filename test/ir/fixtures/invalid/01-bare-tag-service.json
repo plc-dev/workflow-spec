@@ -1,0 +1,11 @@
+{
+  "irVersion": 1,
+  "name": "bad-bare-tag",
+  "steps": [
+    {
+      "id": "runQuery",
+      "service": "registry.internal/sql-exec:v1",
+      "function": "query"
+    }
+  ]
+}

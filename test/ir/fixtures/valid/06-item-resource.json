@@ -1,0 +1,28 @@
+{
+  "irVersion": 1,
+  "name": "item-resource-example",
+  "description": "Exercises the itemResource binding (D15/D16) - a step reads a heavy leaf (the item's SQL dump) via an itemResource binding whose itemId is request-scoped.",
+  "inputParameters": ["itemInstanceId"],
+  "steps": [
+    {
+      "id": "loadDump",
+      "service": "registry.internal/loader@sha256:9f2c8e1a0000000000000000000000000000000000000000000000000000abcd",
+      "function": "load",
+      "reads": {
+        "dump": {
+          "from": "itemResource",
+          "itemId": { "from": "request", "param": "itemInstanceId" },
+          "path": "/resources/dump"
+        },
+        "referenceSolution": {
+          "from": "itemResource",
+          "itemId": { "from": "request", "param": "itemInstanceId" },
+          "path": ""
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "loaded": { "from": "step", "id": "loadDump", "output": "result" }
+  }
+}

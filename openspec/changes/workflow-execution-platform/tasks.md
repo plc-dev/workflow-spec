@@ -83,7 +83,7 @@
 
 ## 5. Workflow DSL
 
-- [ ] 5.1 Define the IR schema (steps, bindings, write targets, secret refs, outputs) per design.md D8 - engine-agnostic
+- [x] 5.1 Define the IR schema (steps, bindings, write targets, secret refs, outputs) per design.md D8 - engine-agnostic. Done: see `docs/impl-plans/0004-ir-schema.md` - new top-level `ir/` module (ADR-0007/0012): `src/ir/domain/{workflow-spec,node,binding,session-state,write-target,secret-ref,placeholder-types}.ts` (the `Binding` discriminated union, all 8 kinds incl. `itemResource` per D16, promoted from ADR-0003's contract), `src/ir/schema/workflow-spec.schema.json` (promoted from `archive/dsl/schema/`, task 1.7, extended with `itemResource`), `src/ir/validate.ts` (ajv-backed, never throws - returns `{valid, errors}`), `src/ir/constants.ts`, `src/ir/index.ts` barrel. `migrate()`/`deriveSignature()` (ADR-0003's other named contract pieces) and 5.2/5.3/5.9-5.13b are explicitly deferred to future packages - see the plan doc's Scope section. Tests: `test/ir/validate.test.ts` (46 tests: whole-document fixtures ported/extended from `archive/dsl/schema/examples{,-invalid}/` plus 14 targeted test cases TC-1 through TC-14), `test/ir/domain.test.ts` (1 compile-time exercise) - 107/107 tests passing repo-wide (plain Vitest, no testcontainers needed - the first genuinely I/O-free package in this repo).
 - [ ] 5.2 Implement an authoring-surface-to-IR compiler for the syntax chosen in 1.7
 - [ ] 5.3 Implement validation against the registry (reject unknown service/function references) at IR-compile time
 - [ ] 5.4 Implement data-binding syntax for user/static/session source references

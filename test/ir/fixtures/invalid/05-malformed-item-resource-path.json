@@ -1,0 +1,19 @@
+{
+  "irVersion": 1,
+  "name": "bad-item-resource-path",
+  "inputParameters": ["itemInstanceId"],
+  "steps": [
+    {
+      "id": "loadDump",
+      "service": "registry.internal/loader@sha256:9f2c8e1a0000000000000000000000000000000000000000000000000000abcd",
+      "function": "load",
+      "reads": {
+        "dump": {
+          "from": "itemResource",
+          "itemId": { "from": "request", "param": "itemInstanceId" },
+          "path": "resources.dump"
+        }
+      }
+    }
+  ]
+}

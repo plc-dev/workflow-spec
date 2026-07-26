@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://workflow-platform.internal/schemas/ir/workflow-spec.schema.json",
+  "title": "WorkflowSpec",
+  "description": "JSON Schema for the workflow-execution-platform IR (design.md D8/D8a/D8b/D8c/D8d/D16). Promoted from archive/dsl/schema/ (task 1.7) into ir/ (task 5.1, docs/impl-plans/0004-ir-schema.md), extended with the itemResource binding kind (D16). Validates the PARSED document structure only (YAML or JSON); the restricted-YAML profile (no anchors/aliases/merge-keys/custom-tags per D8a) is NOT and CANNOT be enforced here - that belongs to the parser (task 5.6a, a future dsl-compiler/).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["irVersion", "name", "steps"],
+  "properties": {
+    "irVersion": {
+      "description": "D8d/D11: locked field name. Integer, forward-only migration. This schema only requires its presence and integer type; migration itself is a separate, deferred package.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "inputParameters": {
+      "description": "D8a: the workflow's derived signature stays flat, named, typed. Optional explicit declaration of the flat parameter names the workflow accepts. Each entry is a flat name (no dotted paths).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/flatName" },
+      "uniqueItems": true
+    },
+    "sessionState": {
+      "description": "D8a: declared once per logical session key, not repeated per binding.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/sessionStateDecl" }
+    },
+    "steps": {
+      "description": "D8/D8c: array of nodes. A node is a plain Step, a branch node, or a map node.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "outputs": {
+      "description": "D8c: top-level workflow yields - map of name -> Binding pointing into the top-level graph.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/binding" }
+    }
+  },
+  "$defs": {
+    "flatName": {
+      "description": "D8a: a flat, named parameter/key - no dotted or nested path. Reject any '.' character.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^.]+$"
+    },
+
+    "datasetUrn": {
+      "description": "D8a: static dataset URN. urn:<platform>:<resourceType>:<namespace>/<name>[:<tag> | @<alg>:<digest>].",
+      "type": "string",
+      "pattern": "^urn:[A-Za-z0-9][A-Za-z0-9-]*:[A-Za-z0-9][A-Za-z0-9-]*:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+|@[A-Za-z0-9]+:[A-Za-z0-9]+)?$"
+    },
+
+    "ociDigestRef": {
+      "description": "D8c: a step's service reference is ALWAYS pinned to a digest (@<alg>:<digest>), never a bare tag. Hard rule.",
+      "type": "string",
+      "pattern": "^[^@\\s]+@[A-Za-z0-9]+:[A-Fa-f0-9]+$"
+    },
+
+    "jsonPointer": {
+      "description": "D16: provisional grammar for an itemResource path - RFC 6901 JSON Pointer (the empty pointer, or a sequence of '/'-prefixed reference tokens with '~0'/'~1' escaping). Revisitable per D16's own open question - see docs/impl-plans/0004-ir-schema.md.",
+      "type": "string",
+      "pattern": "^$|^(/[^/~]*(~[01][^/~]*)*)*$"
+    },
+
+    "sessionStateDecl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interactivity"],
+      "properties": {
+        "interactivity": {
+          "type": "string",
+          "enum": ["interactive", "batch"]
+        },
+        "fallback": { "$ref": "#/$defs/binding" }
+      }
+    },
+
+    "sessionWriteTarget": {
+      "description": "D8c: a write target - a session key a step's output may be committed to. Gating is automatic (D8c), never an authored flag.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["to", "key"],
+      "properties": {
+        "to": { "const": "session" },
+        "key": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "secretRef": {
+      "description": "D8c/D7: a secret reference is a SEPARATE category, not a Binding kind. scope is writer|user.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "name"],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": ["writer", "user"]
+        },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "binding": {
+      "description": "D8/D8a/D8c/D16: discriminated union of binding source kinds. Note: 'secret' is deliberately NOT a Binding kind (D8c/D7/D10), which is what naturally excludes secrets from compute's 'using' inputs.",
+      "type": "object",
+      "oneOf": [
+        { "$ref": "#/$defs/binding_static" },
+        { "$ref": "#/$defs/binding_session" },
+        { "$ref": "#/$defs/binding_request" },
+        { "$ref": "#/$defs/binding_step" },
+        { "$ref": "#/$defs/binding_item" },
+        { "$ref": "#/$defs/binding_literal" },
+        { "$ref": "#/$defs/binding_compute" },
+        { "$ref": "#/$defs/binding_itemResource" }
+      ]
+    },
+
+    "binding_static": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "ref"],
+      "properties": {
+        "from": { "const": "static" },
+        "ref": { "$ref": "#/$defs/datasetUrn" }
+      }
+    },
+
+    "binding_session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "key"],
+      "properties": {
+        "from": { "const": "session" },
+        "key": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "binding_request": {
+      "description": "D8a: flat name only - reject dotted/nested paths.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "param"],
+      "properties": {
+        "from": { "const": "request" },
+        "param": { "$ref": "#/$defs/flatName" }
+      }
+    },
+
+    "binding_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "id", "output"],
+      "properties": {
+        "from": { "const": "step" },
+        "id": { "type": "string", "minLength": 1 },
+        "output": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "binding_item": {
+      "description": "D8a: forEach item binding - deliberately minimal, exposes raw item value only, no other fields.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from"],
+      "properties": {
+        "from": { "const": "item" }
+      }
+    },
+
+    "binding_literal": {
+      "description": "D8c: literal constant. Value may be an arbitrary JSON value/structure, passed through opaquely.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["literal"],
+      "properties": {
+        "literal": {}
+      }
+    },
+
+    "binding_compute": {
+      "description": "D8/D10: compute binding - a JSON-Logic expression object plus a 'using' map of named inputs. Each 'using' input is itself a Binding (never a secret, by construction: secret is not a Binding kind).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compute"],
+      "properties": {
+        "compute": { "type": "object" },
+        "using": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/binding" }
+        }
+      }
+    },
+
+    "binding_itemResource": {
+      "description": "D16: resolves at run time against the per-item-instance flattened manifest cache (task 12.4, not built by this schema) into either a static-equivalent dataset reference or a plain value. itemId is itself a Binding (typically request-scoped); path is a locator (provisional JSON Pointer grammar - see #/$defs/jsonPointer).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "itemId", "path"],
+      "properties": {
+        "from": { "const": "itemResource" },
+        "itemId": { "$ref": "#/$defs/binding" },
+        "path": { "$ref": "#/$defs/jsonPointer" }
+      }
+    },
+
+    "node": {
+      "description": "A node in a steps/body list: a plain Step, a branch, or a map. Discriminated by 'kind' (absent => plain Step).",
+      "type": "object",
+      "oneOf": [
+        { "$ref": "#/$defs/step" },
+        { "$ref": "#/$defs/branchNode" },
+        { "$ref": "#/$defs/mapNode" }
+      ]
+    },
+
+    "step": {
+      "description": "D8c: a plain step invocation. No 'kind' field (or kind absent). id unique document-scoped (not enforced structurally across nesting - semantic reference resolution belongs to a later analysis pass, not this schema).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "service", "function"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": false,
+        "service": { "$ref": "#/$defs/ociDigestRef" },
+        "function": { "type": "string", "minLength": 1 },
+        "dependsOn": {
+          "description": "D8a: optional ordering escape hatch.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "reads": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/binding" }
+        },
+        "writes": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/sessionWriteTarget" }
+        },
+        "secrets": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/secretRef" }
+        }
+      }
+    },
+
+    "branchNode": {
+      "description": "D8c: branch construct. cases is a MAP keyed by stringified selector value, and MAY include a 'default' key inline (per the documented example). yields is optional in the schema; the 'required when >1 step' rule is NOT enforced structurally (see docs/impl-plans/0004-ir-schema.md's Open questions).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "selector", "cases"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "branch" },
+        "selector": { "$ref": "#/$defs/binding" },
+        "cases": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/caseBody" }
+        }
+      }
+    },
+
+    "caseBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["steps"],
+      "properties": {
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/node" }
+        },
+        "yields": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/binding" }
+        }
+      }
+    },
+
+    "mapNode": {
+      "description": "D8c: map/forEach construct. source is a runtime-sized collection Binding; body is a list of nodes; yields exposes named per-iteration results.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "source", "body"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "map" },
+        "source": { "$ref": "#/$defs/binding" },
+        "body": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/node" }
+        },
+        "yields": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/binding" }
+        }
+      }
+    }
+  }
+}
