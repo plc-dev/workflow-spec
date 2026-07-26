@@ -23,3 +23,13 @@ export const SQL_MARK_EXECUTION_DONE = `
   SET status = 'done', updated_at = now()
   WHERE id = $1
 `;
+
+// Task 6.1b (durable sleep): transitions an execution to `waiting` - the
+// counterpart to SQL_MARK_EXECUTION_DONE, used by engine.waitFor instead
+// of engine.completeExecution when a step needs to durably sleep rather
+// than finish.
+export const SQL_MARK_EXECUTION_WAITING = `
+  UPDATE executions
+  SET status = 'waiting', updated_at = now()
+  WHERE id = $1
+`;

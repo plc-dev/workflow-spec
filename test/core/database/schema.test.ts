@@ -15,13 +15,13 @@ describe("core/schema.sql", () => {
     await tp.stop();
   });
 
-  it("creates executions and checkpoints tables", async () => {
+  it("creates executions, checkpoints, and waits tables", async () => {
     const result = await tp.pool.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
-       WHERE table_schema = 'public' AND table_name IN ('executions', 'checkpoints')
+       WHERE table_schema = 'public' AND table_name IN ('executions', 'checkpoints', 'waits')
        ORDER BY table_name`,
     );
-    expect(result.rows.map((r) => r.table_name)).toEqual(["checkpoints", "executions"]);
+    expect(result.rows.map((r) => r.table_name)).toEqual(["checkpoints", "executions", "waits"]);
   });
 
   it("enforces the executions.status CHECK constraint", async () => {
@@ -30,6 +30,33 @@ describe("core/schema.sql", () => {
         `INSERT INTO executions (session_id, step, status) VALUES ('s', 'step', 'bogus')`,
       ),
     ).rejects.toThrow(/violates check constraint/);
+  });
+
+  // TC-1 (docs/impl-plans/0002-durable-sleep.md): the status CHECK now
+  // accepts 'waiting', task 6.1b's new execution status.
+  it("accepts 'waiting' as an executions.status value", async () => {
+    await expect(
+      tp.pool.query(
+        `INSERT INTO executions (session_id, step, status) VALUES ('s', 'step', 'waiting')`,
+      ),
+    ).resolves.not.toThrow();
+  });
+
+  // TC-1: at least one of wait_key/wake_at is required on a waits row.
+  it("enforces the waits CHECK(wait_key IS NOT NULL OR wake_at IS NOT NULL) constraint", async () => {
+    const {
+      rows: [exec],
+    } = await tp.pool.query<{ id: string }>(
+      `INSERT INTO executions (session_id, step) VALUES ('s', 'step') RETURNING id`,
+    );
+    await expect(
+      tp.pool.query("INSERT INTO waits (execution_id) VALUES ($1)", [exec?.id]),
+    ).rejects.toThrow(/violates check constraint/);
+  });
+
+  it("exposes signal_wait() as a callable function", async () => {
+    const result = await tp.pool.query(`SELECT proname FROM pg_proc WHERE proname = 'signal_wait'`);
+    expect(result.rows).toHaveLength(1);
   });
 
   it("enforces UNIQUE(execution_id, step_id) on checkpoints", async () => {

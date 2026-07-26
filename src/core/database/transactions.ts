@@ -7,6 +7,7 @@ import {
   type ExecutionsRepo,
   createExecutionsRepo,
 } from "../repositories/executions.repository.js";
+import { type WaitsRepo, createWaitsRepo } from "../repositories/waits.repository.js";
 
 // ADR-0002: `core/` exposes `withTransaction(fn) -> repos`. Higher-level
 // concerns (engine/, and later session/, scheduler/, dataset-catalog/)
@@ -14,14 +15,15 @@ import {
 // their own connection or own any schema - this is the ONE place a
 // transaction is opened/committed/rolled back.
 //
-// This package builds only the `executions`/`checkpoints` members of the
-// eventual full repo set (ADR-0002's diagram also lists `waits`,
-// `sessionLog`, `placement`, `datasetIndex`, `memoization`) - those are
-// added incrementally by the packages that actually need them, per
+// This package builds the `executions`/`checkpoints`/`waits` members of
+// the eventual full repo set (ADR-0002's diagram also lists `sessionLog`,
+// `placement`, `datasetIndex`, `memoization`) - those are added
+// incrementally by the packages that actually need them, per
 // docs/impl-plans/0001-durable-core.md's "Open questions" section.
 export interface CoreRepos {
   executions: ExecutionsRepo;
   checkpoints: CheckpointsRepo;
+  waits: WaitsRepo;
   // The raw transaction client itself, for a caller that needs to issue
   // its own query on the SAME transaction before a typed repo exists for
   // it yet (e.g. a future session/scheduler write, or - in this package's
@@ -49,6 +51,7 @@ export async function withTransaction<T>(
     const repos: CoreRepos = {
       executions: createExecutionsRepo(client),
       checkpoints: createCheckpointsRepo(client),
+      waits: createWaitsRepo(client),
       client,
     };
     const result = await fn(repos);

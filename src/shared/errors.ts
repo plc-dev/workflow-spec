@@ -13,6 +13,8 @@
 export const ERROR_IDS = {
   CORE_ENQUEUE_NO_ROW_RETURNED: "core.executions.enqueue_no_row_returned",
   CORE_CHECKPOINT_CONFLICT_NOT_FOUND: "core.checkpoints.conflict_not_found",
+  CORE_WAIT_NO_ROW_RETURNED: "core.waits.insert_no_row_returned",
+  CORE_WAIT_KEY_TOO_LONG: "core.waits.wait_key_too_long",
 } as const;
 
 export type ErrorId = (typeof ERROR_IDS)[keyof typeof ERROR_IDS];
@@ -25,6 +27,8 @@ export const DEFAULT_ERROR_MESSAGES: Record<ErrorId, string> = {
     "Enqueuing an execution did not return the inserted row.",
   [ERROR_IDS.CORE_CHECKPOINT_CONFLICT_NOT_FOUND]:
     "A checkpoint insert conflicted with an existing row, but that row could not be found.",
+  [ERROR_IDS.CORE_WAIT_NO_ROW_RETURNED]: "Inserting a wait did not return the inserted row.",
+  [ERROR_IDS.CORE_WAIT_KEY_TOO_LONG]: "A wait's waitKey exceeds the maximum allowed length.",
 };
 
 export interface PlatformErrorOptions {

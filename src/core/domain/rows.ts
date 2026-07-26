@@ -22,3 +22,12 @@ export interface CheckpointRow {
   output: unknown;
   committed_at: Date;
 }
+
+export interface WaitRow {
+  id: string; // BIGSERIAL comes back as a string from `pg` by default
+  execution_id: string;
+  wait_key: string | null;
+  wake_at: Date | null;
+  satisfied_at: Date | null;
+  created_at: Date;
+}

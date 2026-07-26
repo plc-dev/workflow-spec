@@ -7,6 +7,7 @@ import {
   SQL_ENQUEUE_EXECUTION,
   SQL_FIND_EXECUTION_BY_ID,
   SQL_MARK_EXECUTION_DONE,
+  SQL_MARK_EXECUTION_WAITING,
 } from "./queries/executions.queries.js";
 
 export interface ExecutionsRepo {
@@ -14,6 +15,9 @@ export interface ExecutionsRepo {
   claim(workerId: string, leaseSeconds?: number): Promise<Execution | null>;
   findById(id: number): Promise<Execution | null>;
   markDone(id: number): Promise<void>;
+  // Task 6.1b (durable sleep) - the counterpart to markDone, used by
+  // engine.waitFor.
+  markWaiting(id: number): Promise<void>;
 }
 
 // Bound to a caller-owned transaction client (ADR-0002) - never opens its
@@ -54,6 +58,10 @@ export function createExecutionsRepo(client: PoolClient): ExecutionsRepo {
 
     async markDone(id) {
       await client.query(SQL_MARK_EXECUTION_DONE, [id]);
+    },
+
+    async markWaiting(id) {
+      await client.query(SQL_MARK_EXECUTION_WAITING, [id]);
     },
   };
 }

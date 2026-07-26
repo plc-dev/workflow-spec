@@ -17,7 +17,7 @@ describe("core.withTransaction", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE executions, checkpoints RESTART IDENTITY");
+    await tp.pool.query("TRUNCATE executions, checkpoints, waits RESTART IDENTITY");
   });
 
   it("commits writes from both repos together on success", async () => {

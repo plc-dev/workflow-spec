@@ -14,7 +14,7 @@ describe("ExecutionsRepo.claim", () => {
   });
 
   beforeEach(async () => {
-    await tp.pool.query("TRUNCATE executions, checkpoints RESTART IDENTITY");
+    await tp.pool.query("TRUNCATE executions, checkpoints, waits RESTART IDENTITY");
   });
 
   // TC-2: N queued executions, M >= N concurrent claimers - exactly-once

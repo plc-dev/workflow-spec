@@ -1,6 +1,7 @@
 import type { Checkpoint } from "./checkpoint.js";
 import type { Execution } from "./execution.js";
-import type { CheckpointRow, ExecutionRow } from "./rows.js";
+import type { CheckpointRow, ExecutionRow, WaitRow } from "./rows.js";
+import type { Wait } from "./wait.js";
 
 export function mapExecutionRow(row: ExecutionRow): Execution {
   return {
@@ -23,5 +24,16 @@ export function mapCheckpointRow(row: CheckpointRow): Checkpoint {
     stepId: row.step_id,
     output: row.output,
     committedAt: row.committed_at,
+  };
+}
+
+export function mapWaitRow(row: WaitRow): Wait {
+  return {
+    id: Number(row.id),
+    executionId: Number(row.execution_id),
+    waitKey: row.wait_key,
+    wakeAt: row.wake_at,
+    satisfiedAt: row.satisfied_at,
+    createdAt: row.created_at,
   };
 }

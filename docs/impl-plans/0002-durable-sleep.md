@@ -2,7 +2,7 @@
 
 ## Status
 
-`plan-agreed`
+`reviewed`
 
 ## Scope
 
@@ -325,3 +325,184 @@ instance, not a mock. No new stakes beyond that:
 `WaitsRepo.findByExecutionId` has no dedicated test case - it is exercised
 as an assertion helper inside TC-2/TC-4/TC-6/TC-8 (checking `satisfied_at`
 state directly), sufficient given it has no branching logic of its own.
+
+## Implementation notes
+
+Built as planned, with one small addition and one naming note beyond the
+plan's own interface sketch:
+
+- **`ExecutionsRepo.markWaiting`/`SQL_MARK_EXECUTION_WAITING`** - a small
+  addition not spelled out in the original interface sketch (which only
+  named `waitFor`/`signalWait` at the `engine/` level), needed as
+  `markDone`'s direct counterpart so `engine.waitFor` has a typed repo
+  method to call rather than reaching for `repos.client` directly. Same
+  shape as `markDone`, no new pattern introduced.
+- **`signal_wait()`'s `RETURN NEXT`** re-selects the just-updated `waits`
+  row via `UPDATE ... RETURNING * INTO v_wait` before returning it, so the
+  `satisfied_at` timestamp callers see (`WaitsRepo.signal`'s return value)
+  is the actual committed value, not the pre-update snapshot.
+- **`waits_pending_wake_idx`/`waits_pending_key_idx`** (partial indexes,
+  `WHERE satisfied_at IS NULL AND ...`) were not explicitly named in the
+  plan's file-layout sketch (which only showed the `waits` table's
+  columns) but are a direct, uncontroversial consequence of the plan's own
+  "only pending waits are ever scanned" framing - added alongside the
+  table rather than treated as a separate decision.
+- **Existing tests' `TRUNCATE executions, checkpoints RESTART IDENTITY`
+  statements** (0001's `claim-complete.test.ts`, `transactions.test.ts`,
+  `executions.repository.test.ts`, `checkpoints.repository.test.ts`) had
+  to be extended to `TRUNCATE executions, checkpoints, waits RESTART
+  IDENTITY` - `waits`' new `FOREIGN KEY (execution_id) REFERENCES
+  executions(id)` makes a `TRUNCATE executions` that doesn't also name
+  every table with a live FK into it fail outright, regardless of whether
+  `waits` has any rows. Not a plan deviation (the plan's own Scope
+  correctly anticipated extending `executions`), just a mechanical
+  consequence worth recording since it touches files this package didn't
+  otherwise plan to touch.
+
+The channel-naming correction agreed during Phase 1 review
+(`execution_ready`, not `wfx_execution_ready`) is implemented exactly as
+recorded in the Sources section above - `EXECUTION_READY_CHANNEL =
+"execution_ready"` in `core/constants.ts`, referenced by name (not
+re-hardcoded) only in comments, since the actual `pg_notify(...)` call
+lives in SQL (`signal_wait()`) and can't literally import the TypeScript
+constant - the same cross-runtime sync-by-hand posture already accepted
+for `DEFAULT_LEASE_SECONDS`.
+
+All 9 planned test cases (TC-1 through TC-9) are implemented and passing,
+plus 1 additional repository-level test (`WaitsRepo.signal`'s empty-array
+case on an unknown key) added because it was a trivial extension of
+TC-4/TC-5's own fixtures already in place, not part of the original
+9-case set:
+
+- TC-1: `test/core/database/schema.test.ts` (3 new tests, plus the
+  existing `waits`-inclusive table-listing assertion extended in place:
+  `'waiting'` status accepted, the waits `CHECK` enforced, `signal_wait()`
+  exists)
+- TC-2, TC-3, TC-6, TC-7, TC-8: `test/engine/wait.test.ts` (5 tests)
+- TC-4, TC-5 (repo level): `test/core/repositories/waits.repository.test.ts`
+  (3 tests, including the unknown-key no-op case)
+- TC-9: `test/core/database/wake-listener.test.ts` (2 tests: notify
+  delivery, and unsubscribe/close silencing further delivery)
+
+`npx tsc --noEmit`, `npx biome check .`, and `npx vitest run` all pass
+clean (34/34 tests across 11 files, up from 0001's 21) - verified directly
+immediately before writing this section, not assumed.
+
+No env vars were added or changed - `.example.env` needed no update
+(verified by inspection, not just by absence of a diff).
+
+No follow-up tasks spun off. `WakeListener` remains deliberately unwired
+to any poll loop, exactly as scoped - the first real consumer will be
+whichever of `apps/worker` (6.15) or the generic interpreter (6.2) builds
+that loop.
+
+**Post-review fixes** (from the local code review pass immediately after
+this section was first written - all within this package's own scope, no
+plan/test-design change; each is also covered by a new regression test,
+not just fixed in place):
+
+- **Lock-order deadlock between `claim_execution()` and `signal_wait()`**
+  on a hybrid wait (both `wake_at` and `wait_key` set): the original
+  `signal_wait()` locked `waits` before `executions`, the opposite of
+  `claim_execution()`'s own order, an AB-BA deadlock shape under real
+  concurrency. Fixed by reordering `signal_wait()` to lock the
+  `executions` row first (via a `PERFORM ... FOR UPDATE`), then re-lock
+  and re-check the `waits` row before acting - both functions now agree
+  on lock order. Regression test:
+  `test/engine/wait.test.ts` - "does not deadlock when a due timer claim
+  races a same-key signal on the same hybrid wait" (20 hybrid waits,
+  claimed and signaled concurrently).
+- **`WakeListener`'s raw `pg.Client` had no `error` listener** - a
+  dropped/terminated connection would have crashed the whole process
+  (Node's default behavior for an unhandled `'error'` event), unlike
+  `transactions.ts`'s existing swallow/log pattern for the same class of
+  event. Fixed by adding an `error` listener that logs via the shared
+  `pino` instance rather than swallowing silently (this connection is
+  meant to live for the process lifetime, so a subscriber otherwise has
+  no way to learn notifications stopped). Regression test:
+  `test/core/database/wake-listener.test.ts` - "does not crash the
+  process when its connection is forcibly terminated."
+- **`executions.status`'s widened `CHECK` wasn't actually idempotent
+  against an already-existing table** - `CREATE TABLE IF NOT EXISTS` is a
+  no-op if `executions` already exists (e.g. a persistent
+  `docker-compose.dev.yml` volume from before this package), so the old,
+  narrower constraint would have silently survived a re-apply. Fixed with
+  an explicit `ALTER TABLE ... DROP CONSTRAINT IF EXISTS ... ADD
+  CONSTRAINT ...` pair, making the widening itself re-appliable. No
+  dedicated new test (this is a schema-apply-mechanics fix, not new
+  runtime behavior) - covered indirectly by every existing test, all of
+  which apply this file fresh via testcontainers.
+- **`wait_key` was unbounded `TEXT`, fed directly into `pg_notify()`**,
+  whose payload Postgres caps at 8000 bytes - an oversized key would have
+  aborted the entire `signal_wait()` call, rolling back every other
+  wait's mark-satisfied/promote-to-`queued` work in the same broadcast.
+  Fixed with a new `WAIT_KEY_MAX_LENGTH` constant (256, `core/
+  constants.ts`), enforced up front in `WaitsRepo.create` (a new
+  `ERROR_IDS.CORE_WAIT_KEY_TOO_LONG` / `FatalError`) as the primary check,
+  plus a matching `CHECK(length(wait_key) <= 256)` on the `waits` table
+  itself as a backstop for any other writer. Regression test:
+  `test/core/repositories/waits.repository.test.ts` - "rejects a waitKey
+  longer than WAIT_KEY_MAX_LENGTH."
+- **`ExecutionStatus` (domain type) didn't include `"waiting"`** - a type/
+  runtime drift, since the DB's actual value space already included it.
+  Fixed by adding `"waiting"` to the union in `core/domain/execution.ts`.
+  No dedicated new test (a type-level fix; existing tests that read back
+  a `'waiting'` execution already exercise the corrected type).
+- **`WaitsRepo.findByExecutionId` was unused** - flagged as dead code
+  introduced by this package. Resolved by using it (rather than removing
+  it): `test/engine/wait.test.ts`'s TC-2/TC-6 assertions and a new
+  dedicated test in `test/core/repositories/waits.repository.test.ts`
+  ("findByExecutionId returns every wait row for that execution") now
+  call it instead of querying `waits` via raw SQL.
+
+All 9 originally-planned test cases plus these 4 post-review regression
+tests (38 total, up from the 34 first reported above) pass; `tsc
+--noEmit` and `biome check .` remain clean. Re-ran all three commands
+immediately after these fixes, not assumed.
+
+## Review notes
+
+Compared against the agreed plan (Phase 1) and agreed test design (Phase
+2), not a fresh read of the code in a vacuum:
+
+- Every Scope item (task 6.1b) is present: the `waits` table,
+  `claim_execution()`'s due-timer-wait `EXISTS` branch, `signal_wait()`,
+  `core/domain/wait.ts`, `core/repositories/waits.repository.ts` +
+  `queries/waits.queries.ts`, `ExecutionsRepo.markWaiting`,
+  `CoreRepos.waits`, `core/database/wake-listener.ts`, and
+  `engine/wait.ts` (`waitFor`/`signalWait`).
+- All 9 agreed test cases (TC-1 through TC-9) exist and pass -
+  cross-checked against the Test design table's file/property mapping.
+- A local code review pass (`/local-review-uncommitted`) after the first
+  "implemented" cut found 5 real issues (a lock-order deadlock between
+  `claim_execution()`/`signal_wait()`, a missing error handler on
+  `WakeListener`'s connection, a schema-CHECK-widening idempotency gap, an
+  unbounded `wait_key` colliding with `pg_notify()`'s payload cap, and an
+  `ExecutionStatus` type/runtime drift) plus 2 suggestions (unused
+  `findByExecutionId`, `signal_wait()`'s unbatched lock scope). All 5
+  issues were fixed, each with a new regression test (see Implementation
+  notes' "Post-review fixes"); the `findByExecutionId` suggestion was
+  resolved by using it in tests rather than removing it; the lock-scope
+  suggestion was left as a documented, accepted trade-off (matches the
+  plan's own stated reasoning for why `signal_wait()` can't use `SKIP
+  LOCKED`).
+- Re-ran `npx tsc --noEmit`, `npx biome check .`, and `npx vitest run`
+  immediately before writing this section, after the post-review fixes:
+  clean typecheck, clean lint, 38/38 tests passing across 11 files.
+- The Phase-1-review naming correction (`execution_ready`, not
+  `wfx_execution_ready`) is applied consistently everywhere the channel
+  name appears - the SQL `pg_notify()` call, the TypeScript constant, and
+  every comment referencing it - not just in the plan document.
+- Both small implementation-time additions (`markWaiting`, the two
+  partial indexes) are recorded in Implementation notes with rationale;
+  neither changes the plan's shape, both are direct, unsurprising
+  consequences of what was already agreed.
+- No scope creep: `session_log`/`placement`/`apps/worker`/any DSL-level
+  durable-sleep construct were not touched, consistent with the plan's
+  explicit exclusions. `WakeListener` was built and tested but
+  deliberately left unwired, exactly as scoped.
+- `tasks.md` accurately reflects reality: 6.1b marked `[x]` with pointers
+  to the real files/tests, not just this doc.
+
+No follow-up issues found. Package considered complete for its stated
+scope.
