@@ -35,6 +35,9 @@ export function createFunctionCapabilitiesRepo(client: Queryable): FunctionCapab
           cap.cowSupport,
           cap.changeDetectionSupport,
           cap.nestingDeclaration === null ? null : JSON.stringify(cap.nestingDeclaration),
+          JSON.stringify(cap.invocationDescriptor),
+          cap.stateReuse,
+          cap.additiveWarmUpdate,
         ]);
         const row = result.rows[0];
         if (row) inserted.push(mapFunctionCapabilityRow(row));

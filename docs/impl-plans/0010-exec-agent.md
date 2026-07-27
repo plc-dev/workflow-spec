@@ -126,7 +126,14 @@ assumption:
    `<state-dir>/<stateId>` (recursively) if present, and is a no-op
    (still `ok`) if absent - idempotent by construction, matching ADR-0008's
    "only needed for the local-scratch-file fallback path" framing (the
-   per-hash-CSI-volume path never calls this at all).
+   per-hash-CSI-volume path never calls this at all). **Narrowed further
+   by design.md D17b:** the CALLER-side condition for ever invoking Evict
+   at all is now also gated on the target function having declared
+   `stateReuse: "stateIdKeyed"` in the registry - this package's own
+   `evictHandler` needs no code change for that (it has no registry
+   access and never did; the gating is `apps/worker`'s responsibility,
+   per D17b's "the agent stays deliberately dumb about state-ids" framing,
+   now extended to invocation styles too).
 5. **Local dedup store: in-memory, process-local, TTL-bounded, no
    persistence.** ADR-0008 itself states the durable idempotency gate is
    the checkpoint-check the interpreter performs *before* calling
@@ -260,6 +267,13 @@ agent/
 ```
 
 ### Interfaces
+
+**Superseded by design.md D17b (see this file's final review pass, below)
+- kept here as the shape originally planned/built against, not the
+current one.** `Flag`/`StateID` are now optional (rendered per the
+target function's own registry-declared `invocationDescriptor`/
+`stateReuse`, never a fixed shape every service must accept), `DataFile`
+gains `StdinFromPath`, and `InvokeRequest` gains `PositionalArgs`.
 
 ```go
 // internal/api/types.go
@@ -672,3 +686,34 @@ invalid-flag rejection, dead-leader force-expiry) and the full suite plus
 the real `kind` e2e run were re-verified green after the fixes. This
 package's Scope (6.12/6.13/6.14) is unchanged by this pass - it was a
 correctness/hardening fix-up of already-in-scope code, not new scope.
+
+**Third pass: design.md D17b (task 2.12/4.8's re-corrected scope) - a
+clean override of the "Interfaces"/"Interaction with D17" sections
+above, not an additive extension.** D17b splits D17/D17a's single
+universal `--data-file <path> --state-id <key>` shape into three layers
+(materialization mechanism, unconditional; a per-function DECLARED
+`invocationDescriptor` - flag/positional/stdin; an opt-in per-function
+`stateReuse` capability) so an onboarded service never needs to accept a
+platform-invented CLI contract, only its own native one. This package's
+concrete changes: `internal/api/types.go`'s `DataFile.Flag`/`StateID`
+become optional (`json:",omitempty"`), `DataFile` gains
+`StdinFromPath bool`, and `InvokeRequest` gains `PositionalArgs
+[]string`. `internal/execrunner/execrunner.go`'s `buildArgs` no longer
+renders `StateID` into argv AT ALL (D17b: purely platform-internal
+bookkeeping, never exposed to the invoked subprocess - the concrete
+difference from D17/D17a's old contract, where every service saw
+`--state-id <key>` unconditionally whether it used it or not), appends
+`PositionalArgs` as bare tokens after every flag, and skips a
+`StdinFromPath` entry entirely when building argv; a new `stdinSource`
+helper picks the subprocess's stdin (a `StdinFromPath` file's CONTENTS,
+opened directly from its materialized local path, take priority over
+`req.Stdin`'s raw bytes if both are somehow present). `evictHandler`
+itself needed no change (see item 4 above). New tests:
+`TestRun_positionalArgsAppendedBare`, `TestRun_stdinFromPathStreamsFileContents`;
+`TestRun_dataFilesTranslatedToShape` was revised to assert `--state-id`
+is NEVER rendered into argv, rather than asserting the old shape. Full
+suite (`go test ./...`) re-verified green after the change. This
+package's original Scope (6.12/6.13/6.14) is unaffected in shape - only
+the wire contract these three tasks already implement changed, per the
+onboarding-contract correction recorded in tasks.md 2.12/4.8 and
+design.md D17b.

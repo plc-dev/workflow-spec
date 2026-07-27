@@ -65,7 +65,10 @@ func TestRun_argsTranslatedToFlags(t *testing.T) {
 	}
 }
 
-// T3: DataFiles are translated into "<flag> <path> --state-id <stateId>".
+// T3: a "flag"-style DataFile is translated into "<flag> <path>" - and,
+// per design.md D17b, StateID is NEVER rendered into argv at all (it is
+// purely platform-internal bookkeeping, unlike D17/D17a's old
+// "--state-id <key>" contract every service had to accept).
 func TestRun_dataFilesTranslatedToShape(t *testing.T) {
 	req := api.InvokeRequest{
 		ExecutionID: "e1", StepID: "s1", Function: "f",
@@ -80,14 +83,74 @@ func TestRun_dataFilesTranslatedToShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(resp.Stdout), &parsed); err != nil {
 		t.Fatalf("could not parse fake-cli stdout: %v", err)
 	}
-	want := []string{"--data-file", "/mnt/x", "--state-id", "hash123"}
-	got := parsed.Args
-	if len(got) < len(want) {
-		t.Fatalf("args = %v, want to contain %v", got, want)
+	if !containsPair(parsed.Args, "--data-file", "/mnt/x") {
+		t.Errorf("args = %v, want to contain [--data-file /mnt/x]", parsed.Args)
 	}
-	for i, w := range want {
-		if got[i] != w {
-			t.Errorf("args[%d] = %q, want %q (full: %v)", i, got[i], w, got)
+	for _, a := range parsed.Args {
+		if a == "--state-id" || a == "hash123" {
+			t.Errorf("args = %v, must NOT render state-id into argv (design.md D17b)", parsed.Args)
+		}
+	}
+}
+
+// design.md D17b: a "positional"-style heavy binding is appended to argv
+// as a bare token (via InvokeRequest.PositionalArgs), never wrapped in a
+// flag - the same DataFile above coexists with it in the SAME request,
+// each rendered independently per its own declared style.
+func TestRun_positionalArgsAppendedBare(t *testing.T) {
+	req := api.InvokeRequest{
+		ExecutionID: "e1", StepID: "s1", Function: "f",
+		Args:           map[string]string{"foo": "bar"},
+		PositionalArgs: []string{"/mnt/positional-input"},
+		TimeoutMs:      5000,
+	}
+	resp := Run(context.Background(), testConfig(t), req)
+
+	var parsed struct {
+		Args []string `json:"args"`
+	}
+	if err := json.Unmarshal([]byte(resp.Stdout), &parsed); err != nil {
+		t.Fatalf("could not parse fake-cli stdout: %v", err)
+	}
+	found := false
+	for _, a := range parsed.Args {
+		if a == "/mnt/positional-input" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("args = %v, want to contain bare positional token %q", parsed.Args, "/mnt/positional-input")
+	}
+}
+
+// design.md D17b: a "stdin"-style DataFile streams the materialized
+// file's CONTENTS to the subprocess's stdin - never its path, and never
+// contributing anything to argv.
+func TestRun_stdinFromPathStreamsFileContents(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "heavy-input.txt")
+	if err := os.WriteFile(path, []byte("heavy-file-contents"), 0o600); err != nil {
+		t.Fatalf("could not write test fixture file: %v", err)
+	}
+
+	req := api.InvokeRequest{
+		ExecutionID: "e1", StepID: "s1", Function: "f",
+		DataFiles: []api.DataFile{{Path: path, StdinFromPath: true}},
+		TimeoutMs:  5000,
+	}
+	resp := Run(context.Background(), testConfig(t), req)
+
+	if !strings.Contains(resp.Stdout, "heavy-file-contents") {
+		t.Errorf("subprocess did not receive stdin-from-path contents; stdout=%q", resp.Stdout)
+	}
+	var parsed struct {
+		Args []string `json:"args"`
+	}
+	if err := json.Unmarshal([]byte(resp.Stdout), &parsed); err == nil {
+		for _, a := range parsed.Args {
+			if a == path {
+				t.Errorf("args = %v, stdin-from-path must NOT also appear in argv", parsed.Args)
+			}
 		}
 	}
 }

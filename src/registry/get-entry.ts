@@ -20,6 +20,9 @@ export async function getEntry(pool: Queryable, digest: string): Promise<Registr
       cowSupport: cap.cowSupport,
       changeDetectionSupport: cap.changeDetectionSupport,
       nestingDeclaration: cap.nestingDeclaration,
+      invocationDescriptor: cap.invocationDescriptor,
+      stateReuse: cap.stateReuse,
+      additiveWarmUpdate: cap.additiveWarmUpdate,
     };
   }
 

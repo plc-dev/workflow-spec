@@ -1,6 +1,7 @@
 // Package execrunner translates an api.InvokeRequest into a real fork/exec
 // of the wrapped CLI entrypoint, per docs/adr/0008-in-pod-exec-agent.md and
-// design.md D17/D17a's binding-injection shape.
+// design.md D17b's per-function-declared binding-injection shape
+// (supersedes D17/D17a's single universal shape).
 package execrunner
 
 import (
@@ -9,9 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
 	"time"
 
 	"agent/internal/api"
@@ -46,6 +49,12 @@ func Run(ctx context.Context, cfg config.Config, req api.InvokeRequest) api.Invo
 		return api.InvokeResponse{Status: api.StatusError, ExitCode: -1, Stderr: err.Error()}
 	}
 
+	stdin, closeStdin, err := stdinSource(req)
+	if err != nil {
+		return api.InvokeResponse{Status: api.StatusError, ExitCode: -1, Stderr: err.Error()}
+	}
+	defer closeStdin()
+
 	// req.TimeoutMs is validated as strictly positive before this function
 	// is ever called (server/invoke.go) - no "unbounded when zero" case
 	// remains here.
@@ -56,8 +65,8 @@ func Run(ctx context.Context, cfg config.Config, req api.InvokeRequest) api.Invo
 	cmd := exec.CommandContext(runCtx, cfg.ExecPath, args...) //nolint:gosec // ExecPath is platform-controlled, not user input; args are validated above
 	cmd.Env = buildEnv(req.Secrets)
 
-	if len(req.Stdin) > 0 {
-		cmd.Stdin = bytes.NewReader(req.Stdin)
+	if stdin != nil {
+		cmd.Stdin = stdin
 	}
 
 	stdout := newLimitedBuffer(maxCapturedOutputBytes)
@@ -102,12 +111,16 @@ func Run(ctx context.Context, cfg config.Config, req api.InvokeRequest) api.Invo
 	return resp
 }
 
-// buildArgs translates req.Args (light bindings, D17a: "ordinary CLI
-// flags") and req.DataFiles (heavy bindings, D17/D17a's mandated
-// "--data-file <path> --state-id <key>" shape) into a flat argv slice,
-// rejecting any flag name that doesn't match flagNamePattern.
+// buildArgs translates req.Args (light bindings) and req.DataFiles/
+// req.PositionalArgs (heavy bindings, design.md D17b: rendered per the
+// TARGET FUNCTION'S OWN declared invocation style, never a platform-
+// mandated shape) into a flat argv slice, rejecting any flag name that
+// doesn't match flagNamePattern. A DataFile entry with StdinFromPath set
+// contributes nothing to argv at all - see stdinSource. StateID is never
+// rendered into argv (D17b: purely platform-internal bookkeeping, never
+// exposed to the invoked subprocess - unlike D17/D17a's old contract).
 func buildArgs(req api.InvokeRequest) ([]string, error) {
-	args := make([]string, 0, len(req.Args)*2+len(req.DataFiles)*4)
+	args := make([]string, 0, len(req.Args)*2+len(req.DataFiles)*2+len(req.PositionalArgs))
 
 	for flagName, value := range req.Args {
 		if !flagNamePattern.MatchString(flagName) {
@@ -117,18 +130,103 @@ func buildArgs(req api.InvokeRequest) ([]string, error) {
 	}
 
 	for _, df := range req.DataFiles {
-		flag := df.Flag
-		if flag == "" {
-			flag = "--data-file"
+		if df.StdinFromPath {
+			continue
 		}
-		name, ok := stripFlagPrefix(flag)
+		name, ok := stripFlagPrefix(df.Flag)
 		if !ok || !flagNamePattern.MatchString(name) {
-			return nil, fmt.Errorf("execrunner: invalid dataFile flag %q", flag)
+			return nil, fmt.Errorf("execrunner: invalid dataFile flag %q", df.Flag)
 		}
-		args = append(args, "--"+name, df.Path, "--state-id", df.StateID)
+		if err := assertSafeArgvValue(df.Path); err != nil {
+			return nil, fmt.Errorf("execrunner: dataFile path for flag %q: %w", df.Flag, err)
+		}
+		args = append(args, "--"+name, df.Path)
 	}
 
+	// Local-review fix: PositionalArgs entries were appended to argv with
+	// NO validation at all - unlike every flag VALUE above (which, prior
+	// to this fix, was also unchecked; see assertSafeArgvValue), a bare
+	// positional token starting with "-" is trivially reparsed by the
+	// wrapped CLI as an unrelated flag. apps/worker's own dispatch.ts
+	// now rejects this before ever sending the request; this is
+	// defense-in-depth on the agent's own side, matching the posture
+	// already applied to Args/DataFile flag names.
+	for _, positional := range req.PositionalArgs {
+		if err := assertSafeArgvValue(positional); err != nil {
+			return nil, fmt.Errorf("execrunner: positional arg: %w", err)
+		}
+	}
+	args = append(args, req.PositionalArgs...)
+
 	return args, nil
+}
+
+// assertSafeArgvValue rejects an argv VALUE token (never a flag name,
+// which flagNamePattern already governs) that could itself be
+// reinterpreted as a flag by the wrapped CLI, or that looks like a path-
+// traversal attempt. This is defense-in-depth, not the primary guard -
+// apps/worker's dispatch.ts already rejects the same shapes before ever
+// calling this agent (see its own assertSafeArgValue/
+// assertHeavyBindingIsPath); duplicated here because this agent must
+// never trust a caller's own validation as its only line of defense.
+func assertSafeArgvValue(value string) error {
+	if strings.HasPrefix(value, "-") {
+		return fmt.Errorf("value %q looks like a flag (starts with '-')", value)
+	}
+	for _, segment := range strings.FieldsFunc(value, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if segment == ".." {
+			return fmt.Errorf("value %q contains a path-traversal segment", value)
+		}
+	}
+	return nil
+}
+
+// stdinSource picks what the invoked subprocess's stdin should be, per
+// design.md D17b: a DataFile with StdinFromPath set takes priority (the
+// agent streams the file's CONTENTS directly from the local path it was
+// materialized at - never carrying those bytes over the Invoke RPC
+// itself, design.md D6/R3); otherwise it falls back to req.Stdin
+// (arbitrary bytes, unrelated to heavy-binding transport - e.g. a
+// function invoked with ad hoc stdin data). Returns a nil reader (and a
+// no-op closer) when neither is present, leaving cmd.Stdin unset. At most
+// one DataFile is expected to declare StdinFromPath for a given call; if
+// more than one does, the first wins - a real registry-side inconsistency
+// (validate.ts) that should never reach this package in a correctly
+// registered function.
+func stdinSource(req api.InvokeRequest) (io.Reader, func(), error) {
+	for _, df := range req.DataFiles {
+		if !df.StdinFromPath {
+			continue
+		}
+		// Local-review fix: df.Path was passed straight to os.Open with
+		// only a comment ("platform-materialized, not user input")
+		// asserting its safety, with nothing enforcing it. This is
+		// NOT a full containment check - this agent has no configured
+		// materialization root to validate df.Path against (Layer 1's
+		// actual mechanism remains unspecified, design.md D17/D6) - but
+		// requiring an absolute path and rejecting ".." segments closes
+		// the cheapest, highest-value share of the arbitrary-local-file-
+		// read risk (e.g. a relative path escaping into another
+		// directory) without inventing a containment root this package
+		// was never scoped to design.
+		if !strings.HasPrefix(df.Path, "/") {
+			return nil, func() {}, fmt.Errorf("execrunner: stdin-from-path %q must be an absolute path", df.Path)
+		}
+		for _, segment := range strings.Split(df.Path, "/") {
+			if segment == ".." {
+				return nil, func() {}, fmt.Errorf("execrunner: stdin-from-path %q contains a path-traversal segment", df.Path)
+			}
+		}
+		f, err := os.Open(df.Path) //nolint:gosec // df.Path is validated immediately above (absolute, no ".." segments)
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("execrunner: opening stdin-from-path %q: %w", df.Path, err)
+		}
+		return f, func() { _ = f.Close() }, nil
+	}
+	if len(req.Stdin) > 0 {
+		return bytes.NewReader(req.Stdin), func() {}, nil
+	}
+	return nil, func() {}, nil
 }
 
 // stripFlagPrefix requires and removes a leading "--", returning ok=false

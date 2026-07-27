@@ -4,6 +4,20 @@ import type { TestPostgres } from "../../helpers/postgres.js";
 import { resetRegistryTables, startRegistryPostgres } from "../../helpers/registry-postgres.js";
 import { DIGEST, HARDWARE_REQUIREMENTS, OCI_REF, OPENAPI_SPEC } from "../fixtures.js";
 
+// design.md D17b - a light-only capability (no heavy bindings, no state
+// reuse), reused across this file's two test cases rather than repeating
+// the full FunctionCapabilityInput shape twice.
+const RUN_QUERY_CAPABILITY = {
+  mutates: false,
+  materializationCostClass: "negligible" as const,
+  cowSupport: false,
+  changeDetectionSupport: true,
+  nestingDeclaration: null,
+  invocationDescriptor: [],
+  stateReuse: "none" as const,
+  additiveWarmUpdate: false,
+};
+
 // docs/impl-plans/0008-shared-database-consolidation.md: withRegistryTransaction
 // is a private module-internal helper (never exported from registry/
 // index.ts), but is tested directly here anyway - it is the exact site of
@@ -37,13 +51,7 @@ describe("registry.withRegistryTransaction", () => {
         hardwareRequirements: HARDWARE_REQUIREMENTS,
       });
       await repos.functionCapabilities.replaceForDigest(DIGEST, {
-        runQuery: {
-          mutates: false,
-          materializationCostClass: "negligible",
-          cowSupport: false,
-          changeDetectionSupport: true,
-          nestingDeclaration: null,
-        },
+        runQuery: RUN_QUERY_CAPABILITY,
       });
       return image;
     });
@@ -67,13 +75,7 @@ describe("registry.withRegistryTransaction", () => {
           hardwareRequirements: HARDWARE_REQUIREMENTS,
         });
         await repos.functionCapabilities.replaceForDigest(DIGEST, {
-          runQuery: {
-            mutates: false,
-            materializationCostClass: "negligible",
-            cowSupport: false,
-            changeDetectionSupport: true,
-            nestingDeclaration: null,
-          },
+          runQuery: RUN_QUERY_CAPABILITY,
         });
         throw new Error("simulated failure after both writes");
       }),

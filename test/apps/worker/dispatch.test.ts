@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import type { DispatchCapability } from "../../../src/apps/worker/dispatch.js";
 import {
   buildInvokeRequest,
   dispatchStep,
+  renderHeavyBindings,
   translateArgsToInvokeArgs,
 } from "../../../src/apps/worker/dispatch.js";
 import { ERROR_IDS } from "../../../src/shared/index.js";
@@ -111,7 +113,7 @@ describe("buildInvokeRequest", () => {
     });
   });
 
-  it("never populates dataFiles/secrets/stdin (out of Scope for this package)", () => {
+  it("never populates dataFiles/positionalArgs/secrets/stdin when no capability is supplied (light-only, out of Scope for secrets)", () => {
     const request = buildInvokeRequest({
       executionId: 1,
       step: makeStep(),
@@ -119,8 +121,162 @@ describe("buildInvokeRequest", () => {
       timeoutMs: 1000,
     });
     expect(request).not.toHaveProperty("dataFiles");
+    expect(request).not.toHaveProperty("positionalArgs");
     expect(request).not.toHaveProperty("secrets");
     expect(request).not.toHaveProperty("stdin");
+  });
+});
+
+// design.md D17b - renderHeavyBindings/translateArgsToInvokeArgs render a
+// heavy binding per the TARGET FUNCTION'S OWN declared invocationDescriptor
+// style, never a platform-mandated "--data-file"/"--state-id" shape.
+describe("renderHeavyBindings", () => {
+  it('renders a "flag"-style entry into dataFiles, and excludes it from args', () => {
+    const capability: DispatchCapability = {
+      invocationDescriptor: [{ param: "dumpFile", style: "flag", flagName: "--dump-file" }],
+      stateReuse: "none",
+    };
+    const resolvedInput = { dumpFile: "/mnt/dump.sql", other: "light" };
+
+    const { dataFiles, positionalArgs } = renderHeavyBindings(resolvedInput, capability);
+    expect(dataFiles).toEqual([{ flag: "--dump-file", path: "/mnt/dump.sql", stateId: undefined }]);
+    expect(positionalArgs).toEqual([]);
+    expect(translateArgsToInvokeArgs(resolvedInput, capability.invocationDescriptor)).toEqual({
+      other: "light",
+    });
+  });
+
+  it('renders a "positional"-style entry into positionalArgs, ordered by positionIndex, never as a dataFiles entry', () => {
+    const capability: DispatchCapability = {
+      invocationDescriptor: [
+        { param: "second", style: "positional", positionIndex: 1 },
+        { param: "first", style: "positional", positionIndex: 0 },
+      ],
+      stateReuse: "none",
+    };
+    const resolvedInput = { first: "/mnt/a", second: "/mnt/b" };
+
+    const { dataFiles, positionalArgs } = renderHeavyBindings(resolvedInput, capability);
+    expect(dataFiles).toEqual([]);
+    expect(positionalArgs).toEqual(["/mnt/a", "/mnt/b"]);
+  });
+
+  it('renders a "stdin"-style entry as a flagless dataFiles entry with stdinFromPath: true', () => {
+    const capability: DispatchCapability = {
+      invocationDescriptor: [{ param: "payload", style: "stdin" }],
+      stateReuse: "none",
+    };
+    const resolvedInput = { payload: "/mnt/payload.json" };
+
+    const { dataFiles } = renderHeavyBindings(resolvedInput, capability);
+    expect(dataFiles).toEqual([
+      { path: "/mnt/payload.json", stateId: undefined, stdinFromPath: true },
+    ]);
+  });
+
+  it('populates stateId only when stateReuse is "stateIdKeyed" AND a contentHash is supplied', () => {
+    const stateIdKeyed: DispatchCapability = {
+      invocationDescriptor: [{ param: "dumpFile", style: "flag", flagName: "--dump-file" }],
+      stateReuse: "stateIdKeyed",
+    };
+    const resolvedInput = { dumpFile: "/mnt/dump.sql" };
+
+    expect(renderHeavyBindings(resolvedInput, stateIdKeyed).dataFiles[0]?.stateId).toBeUndefined();
+    expect(renderHeavyBindings(resolvedInput, stateIdKeyed, "hash123").dataFiles[0]?.stateId).toBe(
+      "hash123",
+    );
+
+    const none: DispatchCapability = { ...stateIdKeyed, stateReuse: "none" };
+    expect(
+      renderHeavyBindings(resolvedInput, none, "hash123").dataFiles[0]?.stateId,
+    ).toBeUndefined();
+  });
+
+  it("throws FatalError WORKER_INVALID_HEAVY_BINDING_VALUE when a declared heavy binding does not resolve to a non-empty string path", () => {
+    const capability: DispatchCapability = {
+      invocationDescriptor: [{ param: "dumpFile", style: "flag", flagName: "--dump-file" }],
+      stateReuse: "none",
+    };
+    expect(() => renderHeavyBindings({ dumpFile: 42 }, capability)).toThrow(
+      expect.objectContaining({ errorId: ERROR_IDS.WORKER_INVALID_HEAVY_BINDING_VALUE }),
+    );
+    expect(() => renderHeavyBindings({ dumpFile: "" }, capability)).toThrow(
+      expect.objectContaining({ errorId: ERROR_IDS.WORKER_INVALID_HEAVY_BINDING_VALUE }),
+    );
+  });
+
+  // Local-review fix: heavy bindings are rendered as bare argv tokens
+  // (positional) or a flag's separate value token (flag/stdin) - the
+  // SAME argv shape assertSafeArgValue already guards for light args.
+  it.each(["flag", "positional", "stdin"] as const)(
+    'rejects a heavy binding value starting with "-" for style %s (argv-injection guard)',
+    (style) => {
+      const capability: DispatchCapability = {
+        invocationDescriptor: [
+          { param: "dumpFile", style, flagName: "--dump-file", positionIndex: 0 },
+        ],
+        stateReuse: "none",
+      };
+      expect(() => renderHeavyBindings({ dumpFile: "--evil-flag" }, capability)).toThrow(
+        expect.objectContaining({ errorId: ERROR_IDS.WORKER_UNSAFE_ARG_VALUE }),
+      );
+    },
+  );
+
+  it('rejects a heavy binding value containing a ".." path-traversal segment', () => {
+    const capability: DispatchCapability = {
+      invocationDescriptor: [{ param: "dumpFile", style: "flag", flagName: "--dump-file" }],
+      stateReuse: "none",
+    };
+    expect(() => renderHeavyBindings({ dumpFile: "/mnt/../etc/passwd" }, capability)).toThrow(
+      expect.objectContaining({ errorId: ERROR_IDS.WORKER_UNSAFE_ARG_VALUE }),
+    );
+  });
+
+  it("throws rather than silently dropping a binding when two positional entries resolve to the same positionIndex", () => {
+    const capability: DispatchCapability = {
+      invocationDescriptor: [
+        { param: "a", style: "positional", positionIndex: 0 },
+        { param: "b", style: "positional", positionIndex: 0 },
+      ],
+      stateReuse: "none",
+    };
+    expect(() => renderHeavyBindings({ a: "/mnt/a", b: "/mnt/b" }, capability)).toThrow(
+      expect.objectContaining({ errorId: ERROR_IDS.WORKER_INVALID_HEAVY_BINDING_VALUE }),
+    );
+  });
+
+  it("omits an entry entirely when its resolved value is undefined (e.g. a step that doesn't bind an optional heavy parameter)", () => {
+    const capability: DispatchCapability = {
+      invocationDescriptor: [{ param: "dumpFile", style: "flag", flagName: "--dump-file" }],
+      stateReuse: "none",
+    };
+    expect(renderHeavyBindings({}, capability)).toEqual({ dataFiles: [], positionalArgs: [] });
+  });
+});
+
+describe("buildInvokeRequest - heavy bindings (design.md D17b)", () => {
+  it("renders dataFiles/positionalArgs per the supplied capability, alongside ordinary light args", () => {
+    const capability: DispatchCapability = {
+      invocationDescriptor: [{ param: "dumpFile", style: "flag", flagName: "--dump-file" }],
+      stateReuse: "stateIdKeyed",
+    };
+    const request = buildInvokeRequest({
+      executionId: 7,
+      step: makeStep(),
+      resolvedInput: { dumpFile: "/mnt/dump.sql", limit: 10 },
+      timeoutMs: 5000,
+      capability,
+      contentHash: "hash123",
+    });
+    expect(request).toEqual({
+      executionId: "7",
+      stepId: "stepA",
+      function: "f",
+      args: { limit: "10" },
+      dataFiles: [{ flag: "--dump-file", path: "/mnt/dump.sql", stateId: "hash123" }],
+      timeoutMs: 5000,
+    });
   });
 });
 

@@ -23,5 +23,8 @@ export function mapFunctionCapabilityRow(row: FunctionCapabilityRow): FunctionCa
     cowSupport: row.cow_support,
     changeDetectionSupport: row.change_detection_support,
     nestingDeclaration: row.nesting_declaration,
+    invocationDescriptor: row.invocation_descriptor,
+    stateReuse: row.state_reuse,
+    additiveWarmUpdate: row.additive_warm_update,
   };
 }

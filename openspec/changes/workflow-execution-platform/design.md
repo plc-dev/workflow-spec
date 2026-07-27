@@ -1236,6 +1236,62 @@ This does **not** touch D9b/D9c's nesting model at all - a service's own outboun
 
 **Rationale**: Recorded here, in design.md, rather than left only in the ADR series, because D17a changes the *scope* of an onboarding-contract decision (D17) in a way that has direct product/onboarding consequences (every registered function, not a CLI-invoked subset, must satisfy the mandated calling convention) - exactly the kind of software-design finding that feeds back into the conceptual design layer rather than staying purely an implementation detail.
 
+### D17b: The heavy-data calling convention itself splits into three layers, so an onboarded service can stay naive about platform internals - supersedes D17/D17a's single universal shape, `docs/adr/0005`/`0008`
+
+**Supersedes D17's *shape*, not D17/D17a's *scope*.** D17a (above) settled *which* functions the heavy-data convention applies to (every step, universally). D17b instead revisits the convention's *shape* itself: D17 bundled two genuinely independent concerns into one mandated string - "heavy data arrives as a local path, never inline" (a real correctness stake, D6's R3) and "state is keyed by a platform-minted content hash, reusable across execs, evictable on demote" (a platform-internal bookkeeping concern) - into a single `--data-file <path> --state-id <key>` shape every onboarded service had to accept verbatim. That conflation is the direct cause of the compatibility finding D17a already recorded: a service is onboardable only if its own CLI happens to already speak the platform's contract, which no third-party service built independently of this platform ever will. **D17 already named the alternative this decision revives** ("a small declared enum of platform-blessed transport shapes... revisit only if a real function's onboarding cost from the unused `--state-id` plumbing becomes a measured problem, not a hypothetical one") - the onboarding gap D17a's own compatibility finding surfaced is exactly that measured problem.
+
+**Decision: split the mandate into three layers**, each answering a different question, so the platform-mandated *unconditional* part stays small and everything a service must itself declare is *native to that service*, never invented to satisfy the platform:
+
+```
+LAYER 1 - UNIVERSAL, platform-side, unconditional, invisible to the
+          service (D17's real correctness stake, D6/R3 - UNCHANGED):
+  Every heavy/dataset-scoped binding is materialized to a local path
+  BEFORE the exec call. Mechanism (shared always-mounted volume, a
+  per-hash CSI volume attached at D4a's promote step, or a worker-
+  written local scratch file) remains entirely the platform's business.
+
+LAYER 2 - PER-FUNCTION, DECLARED at registration (registry/'s
+          `invocationDescriptor`, one entry per heavy parameter,
+          empty for a light-only function) - the service's OWN
+          native CLI signature, analogous to how the OpenAPI spec is
+          already the sole stored contract a CLI/MCP surface is
+          projected FROM (D12), never a shape invented to satisfy
+          this platform:
+     { param: "dumpFile", style: "flag",       flagName: "--dump-file" }
+     { param: "input",    style: "positional", positionIndex: 0 }
+     { param: "payload",  style: "stdin" }
+  "flag": "<flagName> <path>" (two argv tokens). "positional": the path
+  as a bare argv token at the given index. "stdin": the MATERIALIZED
+  FILE'S CONTENTS (never its path, and never carried as bytes over the
+  exec-agent's own Invoke RPC - preserving D6/R3 exactly as Layer 1
+  already does) piped to the subprocess's stdin by the agent.
+
+LAYER 3 - PER-FUNCTION CAPABILITY, D5-style, OPT-IN (registry/'s
+          `stateReuse: "none" | "stateIdKeyed"`, `additiveWarmUpdate`):
+  ONLY a function declaring `stateReuse: "stateIdKeyed"` is ever handed
+  a state-id, and only for its "flag"/"stdin"-style entries (see
+  constraint below) - and even then, the state-id is delivered to the
+  exec-agent as PURELY PLATFORM-INTERNAL BOOKKEEPING (registry/
+  `function_capabilities.state_reuse`, `apps/worker`'s dispatch,
+  `agent/`'s `DataFile.StateID`), NEVER rendered into the invoked
+  subprocess's own argv or environment at all - a naive service never
+  sees a state-id, unlike D17/D17a's old contract which hand it to
+  every service unconditionally whether the service does anything with
+  it or not.
+```
+
+**A `"positional"`-style entry is never eligible for `stateReuse: "stateIdKeyed"`.** Only "flag" and "stdin" styles are rendered through a structure (`agent/`'s `DataFile`) that carries a state-id channel at all; a positional argument is a bare token in an ordered list, and omitting one on a warm hit (the whole point of the optimization) would silently shift every later positional argument's index - unlike a flag, which can be omitted independently of any other flag, or a stdin stream, which either exists or doesn't with nothing else to shift. `registry/`'s `validateRegistration` rejects this combination outright (a registration-time check, not a runtime surprise).
+
+**A lying capability flag costs performance, not correctness.** Layer 3's declaration is an *optimization the platform may always decline* (mirroring D4's "affinity is an optimization; rehydrate anywhere on fallback" and D5a's earn-then-trust progression) - a service that falsely claims `stateReuse: "stateIdKeyed"` merely gets re-materialized every time regardless (the platform can always supply `--data-file`/positional-path/stdin fresh, ignoring any locally cached state the service claims to hold), never a correctness gap the way a false `cowSupport` claim would be (D5a's stated concern for that axis). Combined with D5a's existing trust-tier progression (only a `conformance-passed`/`production-proven` digest's declarations are leaned on for placement), no new trust machinery is introduced for Layer 3.
+
+**This is a clean override of D17/D17a's old shape, not a superset kept for migration.** `registry/`'s schema makes `invocation_descriptor`/`state_reuse`/`additive_warm_update` required columns with no default that silently reproduces the old universal shape; `agent/`'s `DataFile.Flag`/`StateID` become optional (rendered only per Layer 2's declared style), and the old unconditional `--state-id` argv token is removed from `execrunner`'s output entirely - there is no fallback path a service could accidentally rely on.
+
+**Consequence for the one already-identified compatibility finding (D17a).** `ghcr.io/htw-aladin/sql-assessment-service:sha-23e9468` remains **not onboardable**, unchanged - it was found to have **no CLI surface at all** (every spike probe was `curl`), and D17b does not touch ADR-0005's CLI-only outer-dispatch mandate. What D17b changes is the *size* of the upstream change a future CLI-bearing service would need: from "implement this platform's `--data-file <path> --state-id <key>` contract" down to "expose an existing operation as a CLI that accepts a file path (or reads stdin) the way its own author already would, with no platform knowledge required" - the concrete, measurable difference D17's own Rationale named as the condition for revisiting its one-size choice.
+
+**Rationale**: D17's "universal mandated shape" argument (chosen "for simplicity") is sound for Layer 1 (materialization mechanism genuinely is the platform's business, invisible to every service alike) but over-applies it to Layer 2 (argv rendering, which is properly a fact ABOUT a specific service's own binary, not a platform contract) and Layer 3 (state reuse, an opt-in capability claim structurally identical to D5's other per-function axes - mutates/cowSupport/changeDetectionSupport - none of which are mandated shapes either). Splitting restores this design's "naive service" posture (a service registers by declaring facts about itself, per D5's discover-don't-assume default) for the two axes that were never genuinely platform-business, while keeping Layer 1's real correctness stake exactly as strict as D17 already made it.
+
+**Alternatives considered**: Keep D17/D17a's single universal shape (rejected - this is precisely the choice whose stated revisit condition, "onboarding cost from the unused `--state-id` plumbing," is now a real, not hypothetical, finding via the SQL-service compatibility gap). Make ALL of Layers 1-3 per-function discovered/declared, including materialization mechanism (rejected - Layer 1 is genuinely platform-internal machinery no service author should ever need an opinion about, unlike Layers 2/3; collapsing that distinction would re-litigate D17's still-valid reason for keeping materialization mandated). Allow a `"positional"`-style entry to carry a state-id via a parallel ordered array (rejected - reintroduces exactly the index-shift correctness hazard the "flag"/"stdin"-only restriction avoids, for an optimization Layer 3 already treats as strictly optional; a function that wants state reuse for a positional-shaped parameter can instead expose that parameter as "flag"- or "stdin"-style, since Layer 2 already lets the service declare whichever native shape reuse needs).
+
 ## Risks / Trade-offs
 
 - **[Execution engine decision left open]** D6 is deliberately unresolved rather than committed, following the R11 addressability gap and the composability/agent-directed-composition stress tests. -> Mitigation: every other decision, execution plan construct, and capability spec in this change is written engine-agnostically by design, so this can be resolved later (ideally via a short spike, per D6's recommended next step) without invalidating what's already captured.

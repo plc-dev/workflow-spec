@@ -14,7 +14,14 @@
 // clear error BEFORE a round-trip and lets admin.ts reject bad input up
 // front.
 
-import { MATERIALIZATION_COST_CLASSES, NESTING_TRANSPORTS, TRUST_TIERS } from "./constants.js";
+import {
+  INVOCATION_FLAG_NAME_PATTERN,
+  INVOCATION_STYLES,
+  MATERIALIZATION_COST_CLASSES,
+  NESTING_TRANSPORTS,
+  STATE_REUSE_KINDS,
+  TRUST_TIERS,
+} from "./constants.js";
 
 export interface ValidationResult {
   valid: boolean;
@@ -68,6 +75,104 @@ function validateNestingDeclaration(nesting: unknown, fnName: string, errors: st
   }
 }
 
+// design.md D17b, Layer 2 - a function's OWN native CLI signature for
+// each heavy parameter it accepts. Validated structurally here (shape/
+// enum/required-companion-field checks); this is deliberately NOT a
+// mandated single shape (D17/D17a's old universal `--data-file <path>
+// --state-id <key>` contract) - each entry describes whatever the
+// service's real binary already does.
+function validateInvocationDescriptor(descriptor: unknown, fnName: string, errors: string[]): void {
+  if (!Array.isArray(descriptor)) {
+    errors.push(`function "${fnName}": invocationDescriptor must be an array`);
+    return;
+  }
+  const seenParams = new Set<string>();
+  // Local-review fix: neither of these was tracked before, letting a
+  // dispatch-time-only failure through registration:
+  //  - two "positional" entries at the same positionIndex silently
+  //    collapse (one overwrites the other) in apps/worker's dispatch.ts
+  //    Map-based rendering - see that file's own defense-in-depth throw.
+  //  - agent/'s execrunner.stdinSource only ever honors the FIRST
+  //    "stdin"-style DataFile entry for a given Invoke call; a second
+  //    one's materialized file is silently never delivered.
+  const seenPositionIndexes = new Set<number>();
+  let stdinEntryCount = 0;
+  for (const entry of descriptor) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      errors.push(`function "${fnName}": every invocationDescriptor entry must be an object`);
+      continue;
+    }
+    const { param, style, flagName, positionIndex } = entry as Record<string, unknown>;
+    if (typeof param !== "string" || param.length === 0) {
+      errors.push(
+        `function "${fnName}": invocationDescriptor entry.param must be a non-empty string`,
+      );
+    } else if (seenParams.has(param)) {
+      errors.push(
+        `function "${fnName}": invocationDescriptor has a duplicate entry for param "${param}"`,
+      );
+    } else {
+      seenParams.add(param);
+    }
+    if (!INVOCATION_STYLES.includes(style as (typeof INVOCATION_STYLES)[number])) {
+      errors.push(
+        `function "${fnName}": invocationDescriptor entry for param "${String(
+          param,
+        )}" has an invalid style (must be one of ${INVOCATION_STYLES.join("|")}, got ${JSON.stringify(
+          style,
+        )})`,
+      );
+      continue;
+    }
+    if (style === "flag") {
+      if (typeof flagName !== "string" || flagName.length === 0) {
+        errors.push(
+          `function "${fnName}": invocationDescriptor entry for param "${String(
+            param,
+          )}" has style "flag" and requires a non-empty flagName`,
+        );
+      } else if (!INVOCATION_FLAG_NAME_PATTERN.test(flagName)) {
+        errors.push(
+          `function "${fnName}": invocationDescriptor entry for param "${String(
+            param,
+          )}" has flagName ${JSON.stringify(
+            flagName,
+          )}, which does not match ${INVOCATION_FLAG_NAME_PATTERN} (must be "--" followed by letters/digits/hyphens, starting with a letter - the exact shape agent/'s execrunner requires)`,
+        );
+      }
+    }
+    if (style === "positional") {
+      if (
+        typeof positionIndex !== "number" ||
+        !Number.isInteger(positionIndex) ||
+        positionIndex < 0
+      ) {
+        errors.push(
+          `function "${fnName}": invocationDescriptor entry for param "${String(
+            param,
+          )}" has style "positional" and requires a non-negative integer positionIndex`,
+        );
+      } else if (seenPositionIndexes.has(positionIndex)) {
+        errors.push(
+          `function "${fnName}": invocationDescriptor has more than one "positional" entry at positionIndex ${positionIndex} (param "${String(
+            param,
+          )}") - each positional slot must be unique`,
+        );
+      } else {
+        seenPositionIndexes.add(positionIndex);
+      }
+    }
+    if (style === "stdin") {
+      stdinEntryCount += 1;
+    }
+  }
+  if (stdinEntryCount > 1) {
+    errors.push(
+      `function "${fnName}": invocationDescriptor declares ${stdinEntryCount} "stdin"-style entries - agent/'s exec-agent only ever delivers the FIRST to the subprocess's stdin, silently dropping the rest; at most one "stdin" entry is allowed`,
+    );
+  }
+}
+
 function validateCapability(fnName: string, cap: unknown, errors: string[]): void {
   if (typeof fnName !== "string" || fnName.length === 0) {
     errors.push("capability metadata has an empty/invalid function name");
@@ -98,6 +203,57 @@ function validateCapability(fnName: string, cap: unknown, errors: string[]): voi
     errors.push(`function "${fnName}": changeDetectionSupport must be a boolean`);
   }
   validateNestingDeclaration(c.nestingDeclaration, fnName, errors);
+
+  // design.md D17b - REQUIRED, no fallback to D17/D17a's old universal
+  // shape (a clean override, not a migration).
+  validateInvocationDescriptor(c.invocationDescriptor, fnName, errors);
+
+  if (!STATE_REUSE_KINDS.includes(c.stateReuse as (typeof STATE_REUSE_KINDS)[number])) {
+    errors.push(
+      `function "${fnName}": stateReuse must be one of ${STATE_REUSE_KINDS.join(
+        "|",
+      )} (got ${JSON.stringify(c.stateReuse)})`,
+    );
+  }
+  if (typeof c.additiveWarmUpdate !== "boolean") {
+    errors.push(`function "${fnName}": additiveWarmUpdate must be a boolean`);
+  } else if (c.additiveWarmUpdate && c.stateReuse !== "stateIdKeyed") {
+    errors.push(
+      `function "${fnName}": additiveWarmUpdate is only meaningful when stateReuse is "stateIdKeyed"`,
+    );
+  }
+  // A state-reusing function must declare at least one heavy binding it
+  // actually reuses state for - stateReuse with no invocationDescriptor
+  // entries is a contradiction (nothing to key state off of).
+  if (
+    c.stateReuse === "stateIdKeyed" &&
+    Array.isArray(c.invocationDescriptor) &&
+    c.invocationDescriptor.length === 0
+  ) {
+    errors.push(
+      `function "${fnName}": stateReuse "stateIdKeyed" requires at least one invocationDescriptor entry`,
+    );
+  }
+
+  // design.md D17b: only "flag" and "stdin" style entries are rendered via
+  // agent/'s DataFile struct, the ONLY wire shape that carries a stateId.
+  // "positional" heavy bindings go over InvokeRequest.PositionalArgs (a
+  // bare string list, no per-entry metadata) - there is no wire channel
+  // for a state-id on a positional argument, and omitting one on a warm
+  // hit would silently shift every LATER positional argument's index. A
+  // "stateIdKeyed" function must not declare a "positional" entry.
+  if (c.stateReuse === "stateIdKeyed" && Array.isArray(c.invocationDescriptor)) {
+    const positionalParams = (c.invocationDescriptor as Record<string, unknown>[])
+      .filter((entry) => entry && typeof entry === "object" && entry.style === "positional")
+      .map((entry) => entry.param);
+    if (positionalParams.length > 0) {
+      errors.push(
+        `function "${fnName}": stateReuse "stateIdKeyed" is not supported for "positional"-style invocationDescriptor entries (${positionalParams.join(
+          ", ",
+        )}) - no wire channel carries a state-id for a positional argument; use "flag" or "stdin" instead`,
+      );
+    }
+  }
 }
 
 export interface ValidateRegistrationInput {

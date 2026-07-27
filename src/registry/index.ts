@@ -7,10 +7,14 @@
 // docs/impl-plans/0007-registry.md's "Open questions".
 
 export {
+  INVOCATION_STYLES,
+  type InvocationStyle,
   MATERIALIZATION_COST_CLASSES,
   type MaterializationCostClass,
   NESTING_TRANSPORTS,
   type NestingTransport,
+  STATE_REUSE_KINDS,
+  type StateReuse,
   TRUST_TIERS,
   type TrustTier,
 } from "./constants.js";
@@ -18,6 +22,7 @@ export { createPool, type Queryable } from "../shared/index.js";
 export type {
   FunctionCapability,
   FunctionCapabilityInput,
+  InvocationDescriptorEntry,
   NestingDeclaration,
   PlacementFacts,
   RegistryEntry,

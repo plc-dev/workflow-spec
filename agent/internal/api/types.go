@@ -9,13 +9,29 @@ package api
 
 import "encoding/json"
 
-// DataFile is one heavy/dataset-scoped binding, translated by the agent
-// into the "<flag> <path> --state-id <stateId>" CLI shape mandated by
-// design.md D17/D17a.
+// DataFile is one heavy/dataset-scoped binding. design.md D17b supersedes
+// D17/D17a's single universal "<flag> <path> --state-id <stateId>" CLI
+// shape with a per-function DECLARED shape (registry/'s
+// invocationDescriptor, Layer 2) - the agent renders whichever ONE of
+// these three the caller (apps/worker) selected for this entry, never a
+// platform-mandated default:
+//   - Flag set, StdinFromPath false: "--<Flag> <Path>" (two argv tokens).
+//   - Flag empty, StdinFromPath false: Path is a bare POSITIONAL argument
+//     instead - see InvokeRequest.PositionalArgs, not this struct.
+//   - StdinFromPath true: the FILE'S CONTENTS at Path (never Path itself,
+//     and never carried as bytes over this RPC - design.md D6/R3) are
+//     piped to the subprocess's stdin.
+// StateID (Layer 3) is populated ONLY for a function declaring
+// `stateReuse: "stateIdKeyed"` in the registry, and is informational to
+// the agent only - the agent never renders it into argv (a naive service
+// never sees a state-id at all; it is a purely platform-internal
+// bookkeeping value, unlike D17/D17a's old contract which handed it to
+// every service unconditionally).
 type DataFile struct {
-	Flag    string `json:"flag"`
-	Path    string `json:"path"`
-	StateID string `json:"stateId"`
+	Flag          string `json:"flag,omitempty"`
+	Path          string `json:"path"`
+	StateID       string `json:"stateId,omitempty"`
+	StdinFromPath bool   `json:"stdinFromPath,omitempty"`
 }
 
 // Secret is pushed by value over the TLS-secured internal channel (ADR-0008
@@ -35,10 +51,15 @@ type InvokeRequest struct {
 	StepID      string            `json:"stepId"`
 	Function    string            `json:"function"`
 	Args        map[string]string `json:"args,omitempty"`
-	DataFiles   []DataFile        `json:"dataFiles,omitempty"`
-	Secrets     []Secret          `json:"secrets,omitempty"`
-	Stdin       []byte            `json:"stdin,omitempty"`
-	TimeoutMs   int64             `json:"timeoutMs"`
+	// PositionalArgs (design.md D17b): heavy bindings whose function
+	// declares invocationDescriptor style "positional" - ordered by the
+	// caller (apps/worker, per the descriptor's positionIndex), appended
+	// to argv after every flag.
+	PositionalArgs []string   `json:"positionalArgs,omitempty"`
+	DataFiles      []DataFile `json:"dataFiles,omitempty"`
+	Secrets        []Secret   `json:"secrets,omitempty"`
+	Stdin          []byte     `json:"stdin,omitempty"`
+	TimeoutMs      int64      `json:"timeoutMs"`
 }
 
 // Status values for InvokeResponse.Status.

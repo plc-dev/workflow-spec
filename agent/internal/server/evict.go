@@ -15,9 +15,16 @@ import (
 
 // stateIDPattern restricts stateId to a safe path-component shape - no
 // path separators, no "..", nothing that could escape cfg.StateDir once
-// joined. Content hashes (the only real stateIds D17 mints) already fit
-// this shape; this is a defense-in-depth input check, not a format this
-// package invents meaning for.
+// joined. Content hashes (the only real stateIds D17/D17b mint) already
+// fit this shape; this is a defense-in-depth input check, not a format
+// this package invents meaning for.
+//
+// design.md D17b: the agent stays dumb about WHICH functions are
+// state-reusing (that is registry/'s stateReuse capability, a Layer-3
+// concern this package never sees) - Evict is only ever called by the
+// worker for a function it already knows declared
+// `stateReuse: "stateIdKeyed"`; this handler itself has no such check to
+// make, unchanged from D17/D17a.
 var stateIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,255}$`)
 
 func isValidStateID(id string) bool {

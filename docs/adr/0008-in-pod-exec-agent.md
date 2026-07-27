@@ -60,8 +60,18 @@ InvokeRequest {
                                 # step_id), never a separately-invented id
   function: string               # registry function name
   args: { flagName -> value }    # light bindings, already resolved (ADR-0004)
-  dataFiles?: [{                 # OPTIONAL - see "Interaction with D17" below
-    flag: "--data-file", path: <mounted path>, stateId: <content hash>
+  positionalArgs?: string[]      # design.md D17b, Layer 2 - heavy bindings
+                                  # whose function declares invocationDescriptor
+                                  # style "positional", ordered by positionIndex
+  dataFiles?: [{                 # OPTIONAL - see "Interaction with D17b" below
+    flag?: string,                # set ONLY for style "flag" (design.md D17b)
+    path: string,                 # mounted/materialized local path
+    stateId?: string,             # OPTIONAL - only for stateReuse: "stateIdKeyed"
+                                   # (design.md D17b); NEVER rendered into the
+                                   # subprocess's own argv - platform-internal only
+    stdinFromPath?: boolean        # set ONLY for style "stdin" (design.md D17b) -
+                                   # the agent pipes the FILE'S CONTENTS at path
+                                   # to the subprocess's stdin, never path itself
   }]
   secrets?: [{ name, value }]     # pushed BY VALUE over the TLS-secured
                                   # internal channel - see "Secrets" below
@@ -77,10 +87,12 @@ InvokeResponse {
 
 Evict(stateId) -> ack
 
-  Cleans up LOCALLY-held state for a state-id on demote (D4a). Only
-  needed when local state lives on the container's own writable layer
-  (D17's "worker-written local scratch file" option) - see "Interaction
-  with D17" below for why a per-hash CSI volume needs no such call.
+  Cleans up LOCALLY-held state for a state-id on demote (D4a). Only ever
+  called by the worker for a function declaring `stateReuse:
+  "stateIdKeyed"` (design.md D17b) AND only needed when that function's
+  local state lives on the container's own writable layer (D17's
+  "worker-written local scratch file" option) - see "Interaction with
+  D17b" below for why a per-hash CSI volume needs no such call.
 ```
 
 ### Idempotency and crash semantics
@@ -123,18 +135,40 @@ gate (per the existing `executions`/`checkpoints` pattern); the agent's
 local dedup only covers the narrower, purely-in-pod race between "still
 running here" and "a second caller showed up asking for the same work."
 
-### Interaction with D17's state-id-keyed local disk reuse
+### Interaction with D17b's state-id-keyed local disk reuse
 
-D17 already lets a CLI function persist local state keyed by `state-id` and
-reuse it on a later call without re-reading `--data-file`. Tracing this
-through the agent:
+D17 originally let ANY CLI function persist local state keyed by
+`state-id` and reuse it on a later call without re-supplying its heavy
+binding; design.md D17b narrows this to functions that opt in via
+`registry/`'s `stateReuse: "stateIdKeyed"` capability (Layer 3), and
+separates it entirely from HOW that function's own CLI accepts the
+materialized path in the first place (Layer 2, `invocationDescriptor` -
+flag/positional/stdin, native to that service's own binary, never a
+platform-mandated shape). Tracing this through the agent:
 
-- **The agent stays deliberately dumb about state-ids.** Deciding whether
-  a given pod already has `state-id` X warm (so `--data-file` can be
-  omitted) is `@wfx/scheduler`'s job - that is what "pinned" already means
-  under D4a. The agent never tracks state-ids itself; it only passes
-  through whatever flags the worker sends. `dataFiles` is optional in the
-  RPC precisely so the caller can omit it on a warm hit.
+- **The agent stays deliberately dumb about state-ids AND about
+  invocation styles.** Deciding whether a given pod already has
+  `state-id` X warm (so a heavy binding can be omitted) is
+  `@wfx/scheduler`'s job - that is what "pinned" already means under
+  D4a. Deciding WHICH argv shape (flag/positional/stdin) a given
+  function's heavy binding renders as is `apps/worker`'s job, sourced
+  from `registry/`'s `invocationDescriptor` (D12's "sole stored
+  contract" pattern, extended). The agent never tracks state-ids or
+  invocation styles itself; it only renders whatever `args`/
+  `positionalArgs`/`dataFiles` the worker sends, exactly as sent -
+  `dataFiles`/`positionalArgs` are both optional in the RPC precisely so
+  the caller can omit either on a warm hit or for a light-only function.
+  `DataFile.StateID` is likewise never inspected for its OWN meaning by
+  the agent - it is opaque platform bookkeeping the agent carries
+  through but never renders into the invoked subprocess's argv or
+  environment (unlike D17/D17a's old contract, where every service saw
+  `--state-id <key>` unconditionally, whether it used it or not).
+- **A "positional"-style heavy binding is never eligible for
+  `stateReuse: "stateIdKeyed"`** (design.md D17b) - `positionalArgs` is a
+  bare, order-sensitive string list with no per-entry field to carry a
+  state-id on, and `registry/`'s `validateRegistration` rejects the
+  combination at registration time, well before it could ever reach this
+  agent.
 - **Demotion cleanup forks on where local state actually lives**, which
   determines whether `Evict` is ever called:
 ```
@@ -186,15 +220,25 @@ No new routing mechanism is introduced.
   binary plus an init-container image, not a per-service artifact.
 - The two ADR-0005 open questions (exec mechanism, secrets injection) are
   resolved by this ADR rather than left open.
-- `Evict` only matters for the local-scratch-file fallback path; if the
-  platform standardizes on per-hash CSI volumes for all promoted state,
-  `Evict` may end up unused in practice - it is kept in the contract because
-  D17 names the scratch-file fallback as a real, not merely hypothetical,
-  option.
+- `Evict` only matters for the local-scratch-file fallback path AND only
+  for a function declaring `stateReuse: "stateIdKeyed"` (design.md D17b);
+  if the platform standardizes on per-hash CSI volumes for all promoted
+  state, `Evict` may end up unused in practice - it is kept in the
+  contract because D17 names the scratch-file fallback as a real, not
+  merely hypothetical, option.
 - Window A's inherited at-least-once risk for non-deterministic side
   effects is not solved here and is not this ADR's job to solve - it is
   named explicitly so it is not mistaken for a gap introduced by the agent
   shape itself.
+- **Revised by design.md D17b:** `DataFile.Flag`/`StateID` are now
+  optional (rendered per the target function's own registry-declared
+  `invocationDescriptor`/`stateReuse`, never a fixed shape every service
+  must accept), and `InvokeRequest` gains `positionalArgs` for heavy
+  bindings a function's own CLI accepts as a bare positional token. This
+  is a clean override of this ADR's original contract sketch, not an
+  additive/backward-compatible extension - there is no fallback path that
+  reconstructs D17/D17a's old unconditional `--data-file <path>
+  --state-id <key>` shape.
 
 ## Alternatives considered
 

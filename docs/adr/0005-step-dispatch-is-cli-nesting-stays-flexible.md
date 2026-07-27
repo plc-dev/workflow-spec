@@ -51,6 +51,15 @@ axis at all, and no new execution plan construct is introduced for it.
                                         (sdk|http|cli|mcp), DSL-bound
 ```
 
+**Note (design.md D17b, see Consequences item 4 below): the
+`--data-file`/`--state-id` SHAPE shown above is superseded.** What stays
+unconditional from this ADR is the TRANSPORT (CLI, via the exec-agent,
+over the local filesystem) - never that specific string. The actual
+argv rendering is now a per-function DECLARED shape
+(`registry/invocationDescriptor`: flag/positional/stdin), and
+`--state-id`'s equivalent (a `stateId` field) is populated only for a
+function opting into `stateReuse: "stateIdKeyed"`, never unconditionally.
+
 ## Rationale
 
 Unifies materialization/injection at one physical layer (local filesystem
@@ -89,12 +98,36 @@ per-exec-call-scoped env var) for the lifetime of one subprocess call. See
 ADR-0008's "Secrets" section.
 
 **4. D17's capability metadata is now moot as a discovered axis, in exactly
-the way D17 already anticipated.** D17 already states that because the CLI
-heavy-data convention is *mandated*, not discovered, D5's per-function
-capability metadata is unaffected - it never needed to capture "transport
-shape" as a new discovered-capability axis. This ADR extends the mandate
-from "CLI-invoked heavy-data functions" to "every step," which is a wider
-mandate of the same already-accepted shape, not a new kind of exception.
+the way D17 already anticipated - for the TRANSPORT LAYER only.** D17
+already states that because the CLI heavy-data convention is *mandated*,
+not discovered, D5's per-function capability metadata is unaffected - it
+never needed to capture "transport shape" as a new discovered-capability
+axis. This ADR extends that mandate from "CLI-invoked heavy-data
+functions" to "every step, unconditionally, via the exec-agent and the
+local filesystem," which is a wider mandate of the same already-accepted
+shape, not a new kind of exception - and this half stays true even after
+design.md D17b (below).
+
+**Revised by design.md D17b: the mandate above covers TRANSPORT
+(unconditional CLI + exec-agent + local filesystem), not ARGV RENDERING
+or STATE REUSE.** D17b splits what D17 originally bundled into one shape
+into three layers - materialization mechanism (Layer 1, still
+unconditional, still what this ADR's "two parallel materialization
+strategies" rejection is actually about), a per-function DECLARED argv
+rendering (Layer 2 - `registry/`'s `invocationDescriptor`: flag/
+positional/stdin, native to each service's own CLI, never a platform-
+mandated shape), and an opt-in per-function state-reuse capability
+(Layer 3 - `registry/`'s `stateReuse`, D5-style, the same kind of
+declared axis as `cowSupport`/`changeDetectionSupport`). This ADR's own
+rejection of "make the outer-dispatch transport itself a per-function
+discovered capability" (see Alternatives considered, below) is
+unaffected by that split - it was, and remains, about *transport*
+(CLI-vs-REST, in-memory-warm-vs-disk-warm), never about how a step's
+own argv is spelled out for a given function's own binary. Layer 2/3
+being per-function is not a re-introduction of the two-materialization-
+strategy problem this ADR exists to avoid: every step still goes through
+exactly one mechanism (exec-agent, local filesystem), regardless of
+which argv shape a given function declares.
 
 ## Alternatives considered
 

@@ -10,8 +10,9 @@ export const SQL_DELETE_FUNCTION_CAPABILITIES_FOR_DIGEST =
 export const SQL_INSERT_FUNCTION_CAPABILITY = `
   INSERT INTO function_capabilities
     (digest, function_name, mutates, materialization_cost_class,
-     cow_support, change_detection_support, nesting_declaration)
-  VALUES ($1, $2, $3, $4, $5, $6, $7)
+     cow_support, change_detection_support, nesting_declaration,
+     invocation_descriptor, state_reuse, additive_warm_update)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
   RETURNING *
 `;
 

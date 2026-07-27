@@ -1,4 +1,5 @@
 export type { FunctionCapability, FunctionCapabilityInput } from "./function-capability.js";
+export type { InvocationDescriptorEntry } from "./invocation-descriptor.js";
 export { mapFunctionCapabilityRow, mapServiceImageRow } from "./mappers.js";
 export type { NestingDeclaration } from "./nesting-declaration.js";
 export type { PlacementFacts } from "./placement-facts.js";

@@ -5,12 +5,26 @@ import { AGENT_FETCH_TIMEOUT_MARGIN_MS, AGENT_INVOKE_PATH } from "./constants.js
 // agent.md) - field names/optionality kept byte-identical to the Go JSON
 // tags, since this is the wire contract, not an independently invented
 // shape. `stdin` is base64 here (matching Go's `[]byte` JSON encoding);
-// this package never populates it (0011's Scope - light bindings only).
-
+// this package never populates it directly (see `AgentDataFile.stdinFromPath`
+// below for how a heavy binding reaches a subprocess's stdin instead).
+//
+// design.md D17b - supersedes D17/D17a's single universal
+// `--data-file <path> --state-id <key>` shape. A DataFile entry now
+// describes ONE of three ways a function's OWN native CLI signature
+// (registry/'s per-function invocationDescriptor, Layer 2) accepts a
+// materialized local path - `flag` is only set for style "flag";
+// `stdinFromPath` is only set for style "stdin" (the agent pipes the
+// file's CONTENTS to the subprocess, never the path itself, and never
+// carries the bytes over THIS RPC - design.md D6/R3). `stateId` is only
+// set for a function declaring `stateReuse: "stateIdKeyed"` (Layer 3,
+// opt-in) - omitted entirely for the conservative "none" default. This
+// is a clean override of D17/D17a's old shape, not a superset kept for
+// backward compatibility.
 export interface AgentDataFile {
-  flag: string;
+  flag?: string;
   path: string;
-  stateId: string;
+  stateId?: string;
+  stdinFromPath?: boolean;
 }
 
 export interface AgentSecret {
@@ -23,6 +37,9 @@ export interface InvokeRequest {
   stepId: string;
   function: string;
   args?: Record<string, string>;
+  // design.md D17b - positional heavy bindings (invocationDescriptor
+  // style "positional"), ordered by the descriptor's positionIndex.
+  positionalArgs?: string[];
   dataFiles?: AgentDataFile[];
   secrets?: AgentSecret[];
   stdin?: string;

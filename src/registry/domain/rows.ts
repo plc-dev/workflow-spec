@@ -1,4 +1,5 @@
-import type { MaterializationCostClass, TrustTier } from "../constants.js";
+import type { MaterializationCostClass, StateReuse, TrustTier } from "../constants.js";
+import type { InvocationDescriptorEntry } from "./invocation-descriptor.js";
 import type { NestingDeclaration } from "./nesting-declaration.js";
 
 // Raw `pg` row shapes (snake_case, as Postgres returns them) - kept
@@ -22,4 +23,7 @@ export interface FunctionCapabilityRow {
   cow_support: boolean;
   change_detection_support: boolean;
   nesting_declaration: NestingDeclaration | null;
+  invocation_descriptor: InvocationDescriptorEntry[];
+  state_reuse: StateReuse;
+  additive_warm_update: boolean;
 }

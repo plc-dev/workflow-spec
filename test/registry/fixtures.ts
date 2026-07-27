@@ -20,22 +20,33 @@ export const CAPABILITY_METADATA: {
   runQuery: FunctionCapabilityInput;
   loadDump: FunctionCapabilityInput;
 } = {
-  // read-only query: doesn't mutate, cheap, no COW, reports change-detection
+  // read-only query: doesn't mutate, cheap, no COW, reports change-detection.
+  // Light-only (design.md D17b): no heavy bindings, no state reuse.
   runQuery: {
     mutates: false,
     materializationCostClass: "negligible",
     cowSupport: false,
     changeDetectionSupport: true,
     nestingDeclaration: null,
+    invocationDescriptor: [],
+    stateReuse: "none",
+    additiveWarmUpdate: false,
   },
   // load a big dump: mutates, heavy, COW-capable, and can nest into other
-  // services over http (open target set)
+  // services over http (open target set). design.md D17b: this function's
+  // OWN native CLI accepts the materialized dump path via "--dump-file"
+  // (not a platform-mandated "--data-file") and may reuse local state
+  // across execs, including additive/incremental warm updates (matching
+  // its declared cowSupport).
   loadDump: {
     mutates: true,
     materializationCostClass: "heavy",
     cowSupport: true,
     changeDetectionSupport: true,
     nestingDeclaration: { via: "http", targets: "open" },
+    invocationDescriptor: [{ param: "dumpFile", style: "flag", flagName: "--dump-file" }],
+    stateReuse: "stateIdKeyed",
+    additiveWarmUpdate: true,
   },
 };
 

@@ -49,10 +49,18 @@ and the exec-agent itself (0010).
   always sends an empty `secrets` array; `step.secrets` (workflow-spec's
   `SecretRef` binding) is not read or resolved here. `secrets/` (task
   9.1-9.4) is a separate, not-yet-built module.
-- **`dataFiles`** (heavy/dataset-scoped CLI bindings, D17/D17a) - since
-  6.2a's binding resolution only supports `literal`/`request`/`step`
-  (light bindings), this package never populates `InvokeRequest.dataFiles`.
-  Dataset-scoped bindings depend on the dataset catalog (5.6d, not built).
+- **`dataFiles`/`positionalArgs`** (heavy/dataset-scoped CLI bindings,
+  design.md D17/D17a/D17b) - since 6.2a's binding resolution only
+  supports `literal`/`request`/`step` (light bindings), no CALLER in this
+  package's original scope ever supplied a real materialized local path
+  for `dispatch.ts`'s (later-added, see Review notes' final pass)
+  heavy-binding rendering to act on. Dataset-scoped bindings genuinely
+  resolving to a local path depend on the dataset catalog (5.6d, not
+  built) - `renderHeavyBindings`/`buildInvokeRequest`'s `capability`
+  param is written to already be correct once 5.6d lands (this package's
+  own established pattern: state a real gap explicitly rather than guess
+  a shape), but nothing in THIS package's scope calls it with a non-empty
+  `invocationDescriptor` today.
 
 ## Sources
 
@@ -148,6 +156,13 @@ reclaim-and-redispatch against a run that's already `failed` - see
 "Dispatch failure handling" below for why this matters here specifically.
 
 ### Wire types (`agent-client.ts`)
+
+**Superseded by design.md D17b (see this file's Review notes, final
+pass) - kept here as the shape originally planned/built against.**
+`dataFiles[].flag`/`stateId` are now optional (rendered per the target
+function's own registry-declared `invocationDescriptor`/`stateReuse`),
+`dataFiles[].stdinFromPath` was added, and `InvokeRequest.positionalArgs`
+was added.
 
 Mirrors `agent/internal/api/types.go` exactly (field names, optionality):
 
@@ -501,9 +516,14 @@ diff in isolation):
   `Invoke` RPC), 6.3/6.4 (built as one dispatch code path, per plan).
   Everything the Scope section named as explicitly NOT in scope
   (4.1/4.3/4.4-4.7's placement-aware addressing, 6.6's backoff,
-  9.3/9.4's secrets, `dataFiles`) is confirmed absent from the diff -
-  `dispatch.ts`'s `buildInvokeRequest` never sets `dataFiles`/`secrets`/
-  `stdin`, and `agent-client.ts` never calls `scheduler.resolvePlacement`.
+  9.3/9.4's secrets) is confirmed absent from the diff - `dispatch.ts`'s
+  `buildInvokeRequest` never sets `secrets`/`stdin`, and `agent-client.ts`
+  never calls `scheduler.resolvePlacement`. (`dataFiles`/`positionalArgs`
+  rendering was later added per design.md D17b - see this file's final
+  Review-notes pass; no caller in this package's own scope ever
+  populates a non-empty `invocationDescriptor`, so the original claim
+  "never populates dataFiles" still holds for every code path this
+  package itself exercises.)
 - **Module layout matches the agreed Plan exactly**: `main.ts`,
   `config.ts`, `constants.ts`, `agent-client.ts`, `dispatch.ts`,
   `worker-loop.ts`, no `index.ts`, no `database/`/`repositories/`/
@@ -609,5 +629,43 @@ diff in isolation):
   Re-verified after fixes: `npm test` (44 files, 282 tests, up from 270 -
   the new fix-verification tests), `npx tsc --noEmit`, `biome check .`,
   and `agent/`'s own `go test ./...` all clean/green.
+
+**Third pass: design.md D17b (task 2.12/4.8's re-corrected scope) - a
+clean override of the "Wire types"/"Args translation" sections above,
+not an additive extension.** D17b splits D17/D17a's single universal
+`--data-file <path> --state-id <key>` shape into three layers so an
+onboarded service never has to accept a platform-invented CLI contract.
+This package's concrete changes:
+  - `agent-client.ts`'s `AgentDataFile.flag`/`stateId` become optional,
+    `stdinFromPath?: boolean` added; `InvokeRequest.positionalArgs?:
+    string[]` added.
+  - `dispatch.ts` gains a new exported `DispatchCapability` shape
+    (`invocationDescriptor`, `stateReuse`, sourced from `registry/`'s
+    `getPlacementFacts`, never invented per-call) and a new exported
+    `renderHeavyBindings(resolvedInput, capability, contentHash?)` that
+    renders each declared heavy binding per its OWN style - "flag" into
+    `dataFiles` with the function's declared flag name, "positional"
+    into `positionalArgs` (ordered by `positionIndex`), "stdin" into a
+    flagless `dataFiles` entry with `stdinFromPath: true`. `stateId` is
+    populated only when the capability declares `stateReuse:
+    "stateIdKeyed"` AND a caller-supplied `contentHash` is present -
+    real content-hash-to-dispatch wiring is a scheduler/placement
+    concern (4.1/4.3, still not built), an explicit, stated gap rather
+    than a silent one. `translateArgsToInvokeArgs` gained a second
+    parameter (the function's `invocationDescriptor`) so a resolved key
+    matching a heavy-binding param is excluded from ordinary light-flag
+    rendering rather than double-rendered.
+  - `buildInvokeRequest`'s `BuildInvokeRequestParams` gained optional
+    `capability`/`contentHash` fields, defaulting to "no heavy bindings,
+    no state reuse" so every existing call site (light-bindings-only,
+    per this package's own original Scope) is unaffected byte-for-byte.
+  - New unit tests: `renderHeavyBindings`'s three styles, the
+    `stateReuse`/`contentHash` gating, the `WORKER_INVALID_HEAVY_BINDING_VALUE`
+    fail-closed case, and `buildInvokeRequest`'s combined light+heavy
+    rendering. `npx tsc --noEmit`, `biome check .`, and the full `npm test`
+    suite (44 files, 302 tests) re-verified green after the change - see
+    tasks.md 2.12/6.4 and design.md D17b for the corresponding
+    onboarding-contract/design-doc updates this package's change is
+    paired with.
 
 Status: `reviewed`.

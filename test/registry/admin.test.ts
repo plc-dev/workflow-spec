@@ -58,6 +58,9 @@ describe("registerImage", () => {
             cowSupport: false,
             changeDetectionSupport: false,
             nestingDeclaration: null,
+            invocationDescriptor: [],
+            stateReuse: "none",
+            additiveWarmUpdate: false,
           },
         },
       });

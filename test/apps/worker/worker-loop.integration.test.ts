@@ -36,6 +36,10 @@ const CAPABILITY_METADATA_F = {
     cowSupport: false,
     changeDetectionSupport: false,
     nestingDeclaration: null,
+    // design.md D17b - light-only: no heavy bindings, no state reuse.
+    invocationDescriptor: [],
+    stateReuse: "none" as const,
+    additiveWarmUpdate: false,
   },
 };
 

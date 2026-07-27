@@ -40,6 +40,11 @@ export const ERROR_IDS = {
   WORKER_UNSAFE_ARG_VALUE: "apps.worker.dispatch.unsafe_arg_value",
   WORKER_MALFORMED_INVOKE_OUTPUT: "apps.worker.dispatch.malformed_invoke_output",
   WORKER_EXECUTION_MISSING_RUN: "apps.worker.loop.execution_missing_run",
+  // design.md D17b - a resolved binding declared heavy by the function's
+  // invocationDescriptor (Layer 2) resolved to something other than a
+  // non-empty materialized-local-path string; fails closed rather than
+  // silently coercing or guessing a shape.
+  WORKER_INVALID_HEAVY_BINDING_VALUE: "apps.worker.dispatch.invalid_heavy_binding_value",
 } as const;
 
 export type ErrorId = (typeof ERROR_IDS)[keyof typeof ERROR_IDS];
@@ -100,6 +105,8 @@ export const DEFAULT_ERROR_MESSAGES: Record<ErrorId, string> = {
     "The exec-agent's InvokeResponse.output was not a JSON object - this package cannot resolve it into a step's outputs.",
   [ERROR_IDS.WORKER_EXECUTION_MISSING_RUN]:
     "A claimed execution referenced a workflow run id that no longer exists.",
+  [ERROR_IDS.WORKER_INVALID_HEAVY_BINDING_VALUE]:
+    "A binding declared heavy by the function's invocationDescriptor did not resolve to a non-empty materialized-local-path string.",
 };
 
 export interface PlatformErrorOptions {
