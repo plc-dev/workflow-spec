@@ -2,7 +2,7 @@
 
 ## Status
 
-`tests-agreed`
+`reviewed`
 
 ## Scope
 
@@ -428,3 +428,186 @@ the new real-agent-process helper described above - the one addition to
 the default setup this package's own wire-protocol correctness property
 justifies, scoped as narrowly as possible (a local child process, not a
 new Docker/kind dependency).
+
+## Implementation notes
+
+Built exactly per the agreed Plan/Test design, with the following
+deviations - all discovered during Phase 3, none changing the package's
+agreed shape:
+
+1. **`DATABASE_URL` lives in `src/apps/worker/config.ts`, NOT
+   `src/shared/config.ts`**, despite `.example.env`'s pre-existing header
+   note suggesting the latter. `src/shared/config.ts` exports its `config`
+   singleton parsed EAGERLY at module-import time, and is transitively
+   imported by nearly every module in this repo (via
+   `shared/observability/logger.ts`). Making `DATABASE_URL` required there
+   would fail closed for every test/module that merely imports
+   `core/`/`engine/`/etc. without ever needing a live connection (`core/`'s
+   own tests hand repositories an already-connected testcontainers pool
+   directly, never through shared config) - confirmed by actually trying
+   this first and reverting once the blast radius became clear. Kept in
+   `apps/worker/config.ts` instead, parsed once at this app's own explicit
+   startup (`main.ts`), consistent with ADR-0009's "parsed once at each
+   app's startup" read literally (each app, not one global parse point for
+   all of them). `.example.env`'s stale note is corrected in the same
+   change.
+2. **`test/apps/worker/worker-loop.integration.test.ts` starts a FRESH
+   agent process per test (`beforeEach`/`afterEach`), not one shared
+   instance for the whole file.** Discovered while debugging T8: this
+   suite's `resetExecutionAndWorkflowRunTables` helper `RESTART IDENTITY`s
+   the `executions` sequence between tests, so two different tests can
+   produce the SAME `(executionId, stepId)` tuple - which collided with
+   the exec-agent's own local dedup cache (ADR-0008, keyed on exactly that
+   tuple), causing a later test to silently receive an earlier test's
+   STALE cached result instead of actually re-invoking the fixture script.
+   This is a test-isolation artifact only (`executionId` is a genuinely
+   global, never-reset sequence in real operation) - fixed by giving each
+   test its own agent process, not by changing any production code.
+3. **T7's fixture YAML reads `stepA`'s `stdin` output (always `""`),
+   not its `args` output**, when building `stepB`'s dependent binding.
+   `agent/testdata/fake-cli.sh` (task 0010) constructs its own echoed JSON
+   by naively wrapping each argv value in double quotes with no escaping;
+   round-tripping an already-JSON.stringify'd `args` array (which itself
+   contains embedded double quotes) through a SECOND invocation produces
+   invalid JSON on the fixture's own account. This is a pre-existing
+   fixture limitation, not a bug in this package's own args-translation
+   code (T1's unit tests already cover the object/array `JSON.stringify`
+   rule directly, without this landmine) - `agent/testdata/fake-cli.sh`
+   was left unmodified rather than risk changing an already-`reviewed`
+   package's test fixture; the integration test was adjusted instead.
+4. **Small, justified `core/` addition, exactly as planned**:
+   `ExecutionsRepo.markFailed(id)` + `SQL_MARK_EXECUTION_FAILED`
+   (`src/core/repositories/executions.repository.ts`,
+   `repositories/queries/executions.queries.ts`), with its own test in
+   `test/core/repositories/executions.repository.test.ts` (idempotency,
+   mirroring `markDone`'s existing test shape).
+5. **No follow-up tasks.md items spun off.** 4.1/4.3/4.4-4.7 (placement-
+   aware addressing) and 6.6 (retry/backoff) were already `[ ]` before
+   this package and remain `[ ]`, with their existing notes still
+   accurate (this package is now the "real caller" 4.3's note anticipated,
+   but deliberately does not wire placement in - see Scope).
+
+All 11 agreed test cases (T1-T11) pass; the full repo-wide suite
+(`npm test`) passes (44 files, 270 tests) and `agent/`'s own `go test
+./...` remains green (untouched by this package). `npx tsc --noEmit` and
+`biome check .` are both clean.
+
+## Review notes
+
+Compared against the agreed Plan and Test design (not a fresh read of the
+diff in isolation):
+
+- **Every Scope item is covered.** 6.15 (dispatch wired to the real
+  `Invoke` RPC), 6.3/6.4 (built as one dispatch code path, per plan).
+  Everything the Scope section named as explicitly NOT in scope
+  (4.1/4.3/4.4-4.7's placement-aware addressing, 6.6's backoff,
+  9.3/9.4's secrets, `dataFiles`) is confirmed absent from the diff -
+  `dispatch.ts`'s `buildInvokeRequest` never sets `dataFiles`/`secrets`/
+  `stdin`, and `agent-client.ts` never calls `scheduler.resolvePlacement`.
+- **Module layout matches the agreed Plan exactly**: `main.ts`,
+  `config.ts`, `constants.ts`, `agent-client.ts`, `dispatch.ts`,
+  `worker-loop.ts`, no `index.ts`, no `database/`/`repositories/`/
+  `domain/` subdirectories - the planned, deliberate ADR-0012 deviation
+  for an app (not a module) held.
+- **Every agreed test (T1-T11) exists and passes**, mapped 1:1 to the
+  Test design table's scope items/correctness properties - confirmed by
+  re-reading each `it(...)` against its table row, not just checking the
+  suite is green.
+- **Every deviation is recorded** in Implementation notes above: the
+  `DATABASE_URL` placement (shared/ vs. apps/worker/, with the concrete
+  reason - eager-singleton fail-closed blast radius - discovered by
+  trying the originally-suggested location first), the per-test-fresh-
+  agent-process fix (a test-isolation bug found via T8 failing, root-
+  caused to the exec-agent's local dedup cache colliding with
+  `RESTART IDENTITY`-reused execution ids, not a production concern),
+  and the `stdin`-instead-of-`args` fixture-binding choice (a pre-existing
+  `agent/testdata/fake-cli.sh` quoting limitation, left unmodified since
+  that fixture belongs to an already-`reviewed` package).
+- **No scope creep**: the "Open questions" section's three items were
+  resolved exactly as planned (0009's README status fixed as a one-line
+  drive-by; agent auth left genuinely unconfigured, not silently
+  defaulted to anything; `stdin` left unpopulated).
+- **Local code review pass**: run via `/local-review-uncommitted` (six
+  parallel sub-agent tracks: security, performance, business logic,
+  deploy safety, duplication, dead code). Findings and the fixes applied
+  in response:
+  - **CRITICAL - empty/non-JSON stdout terminally failed an otherwise-
+    successful step** (`agent/internal/execrunner/execrunner.go` omits
+    `Output` entirely when stdout isn't valid JSON, e.g. a `Step` with no
+    `writes`). Fixed: `dispatch.ts`'s `parseInvokeOutput` now resolves an
+    absent/`null` output to `{}`, reserving the malformed-output error
+    for output that is PRESENT but not a plain object. Not caught by
+    T1-T11 because `fake-cli.sh` always prints JSON - a new unit test
+    covers the absent-output case directly.
+  - **CRITICAL - argument/flag injection via unvalidated arg values**
+    (only flag NAMES were validated; a resolved value starting with `-`
+    would be parsed by the wrapped CLI as an unrelated flag). Fixed:
+    `dispatch.ts` now rejects (`FatalError WORKER_UNSAFE_ARG_VALUE`) any
+    stringified arg value starting with `-` before ever calling the
+    agent. New unit tests cover string/negative-number cases.
+  - **CRITICAL - a failed run's sibling executions stayed claimable, and
+    a later sibling's `completeStep` could silently flip the run back to
+    `done`** (`claim_execution()` has no join to `workflow_runs.status`;
+    `SQL_MARK_WORKFLOW_RUN_DONE` had no status guard despite its own
+    comment claiming otherwise). Fixed: new `ExecutionsRepo.
+    failRemainingForRun(runId)` (+ `SQL_FAIL_REMAINING_EXECUTIONS_FOR_RUN`,
+    deliberately excluding `'running'` rows - see its own comment) called
+    from `worker-loop.ts`'s new `failRun` helper alongside `markFailed`;
+    `SQL_MARK_WORKFLOW_RUN_DONE` gained a `status <> 'failed'` guard (a
+    small, targeted fix to already-`reviewed` package 0006's query, with
+    its own test). New integration test proves stepB is never dispatched
+    once the run is failed.
+  - **WARNING - a pre-dispatch `FatalError` (e.g. an unsupported binding
+    kind) became an infinite-retry poison-pill** (rolled back instead of
+    failing the run, since it was outside the classification `try`).
+    Fixed: `worker-loop.ts` restructured so `findRunStepNode`/
+    `resolveStepReads`/`dispatchStep` share ONE classification `try`/
+    `catch`. New integration test drives this via a `session` binding
+    (schema-valid, not yet resolvable by 6.2a).
+  - **WARNING - a claimed non-workflow-run execution (`runId == null`)
+    had its claim committed and then abandoned** (returning `false` from
+    inside `withTransaction` commits). Fixed: throws `RetryableError`
+    instead, rolling the claim back. New integration test proves the row
+    reverts to `queued`.
+  - **WARNING - `pg.Pool` created with no `error` listener** (an idle-
+    connection error would crash the whole process). Fixed: `main.ts`
+    attaches a logging listener.
+  - **WARNING - HTTP dispatch had no client-side timeout**, so a hung
+    agent held a transaction/pool-connection/lease indefinitely. Fixed:
+    `agent-client.ts` now passes `AbortSignal.timeout(timeoutMs + margin)`
+    to `fetch`.
+  - **WARNING - no `Authorization` header sent**, forcing a real
+    deployment to run the agent with auth disabled (previously an
+    unaddressed "Open question"). Fixed: optional `AGENT_AUTH_TOKEN`
+    threaded through `config.ts` -> `WorkerDeps` -> `dispatch.ts` ->
+    `agent-client.ts`, sent as `Authorization: Bearer <token>` only when
+    set (no header at all otherwise).
+  - **SUGGESTION - full `stdout`/`stderr` logged verbatim on failure**
+    (potential secret/PII leak into the log sink; pino's redact can't
+    reach free-form subprocess output). Fixed: `worker-loop.ts` now logs
+    `status`/`exitCode` plus a bounded `stderrExcerpt`
+    (`STDERR_LOG_EXCERPT_LENGTH`), never the raw response object.
+  - **SUGGESTION - `evict()`/`EvictResponse`/`AGENT_EVICT_PATH` were dead
+    code** (no production caller). Fixed: removed, along with their
+    tests, until a real demote/cleanup caller exists.
+  - **SUGGESTION - `AGENT_ARG_FLAG_NAME_PATTERN` duplicated across TS,
+    Go, and an error-message string** (drift risk, no parity test). NOT
+    fixed - deferred rather than invent a codegen/contract mechanism
+    unilaterally; noted here for a future package to address if the
+    pattern ever needs to change.
+  - **SUGGESTION - no backoff on transient dispatch failure** (fixed
+    250ms retry). NOT fixed - this is task 6.6's explicitly agreed scope
+    (see this doc's own Scope section), not an oversight; implementing
+    it now would silently expand the agreed Plan without going back to
+    the user first.
+  - **SUGGESTION - hand-mirrored wire types with no cross-language
+    contract test for the full field set** (`dataFiles`/`secrets`/
+    `stdin`/the removed `evict`). NOT fixed - a real fix (codegen or a
+    golden-payload contract test) is a bigger, separate effort better
+    scoped as its own future package.
+
+  Re-verified after fixes: `npm test` (44 files, 282 tests, up from 270 -
+  the new fix-verification tests), `npx tsc --noEmit`, `biome check .`,
+  and `agent/`'s own `go test ./...` all clean/green.
+
+Status: `reviewed`.

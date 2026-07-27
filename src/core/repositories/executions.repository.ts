@@ -6,8 +6,10 @@ import {
   SQL_CLAIM_EXECUTION,
   SQL_ENQUEUE_EXECUTION,
   SQL_ENQUEUE_EXECUTION_FOR_RUN,
+  SQL_FAIL_REMAINING_EXECUTIONS_FOR_RUN,
   SQL_FIND_EXECUTION_BY_ID,
   SQL_MARK_EXECUTION_DONE,
+  SQL_MARK_EXECUTION_FAILED,
   SQL_MARK_EXECUTION_WAITING,
   SQL_PROMOTE_BLOCKED_TO_QUEUED,
 } from "./queries/executions.queries.js";
@@ -20,6 +22,14 @@ export interface ExecutionsRepo {
   // Task 6.1b (durable sleep) - the counterpart to markDone, used by
   // engine.waitFor.
   markWaiting(id: number): Promise<void>;
+  // Package 0011 - the terminal, non-retrying counterpart to markDone,
+  // used by apps/worker when a real dispatch reports a genuine failure.
+  markFailed(id: number): Promise<void>;
+  // Local-review fix (package 0011) - the counterpart to markFailed that
+  // ALSO stops a failed run's other not-yet-claimed executions from
+  // staying claimable. See SQL_FAIL_REMAINING_EXECUTIONS_FOR_RUN's own
+  // comment for why 'running' rows are deliberately left untouched.
+  failRemainingForRun(runId: number): Promise<void>;
   // Task 6.2a (docs/impl-plans/0006-interpreter-plain-steps.md) -
   // engine.submitRun's per-node insert, with an explicit caller-decided
   // initial status (blocked/queued) instead of enqueue's always-'queued'
@@ -77,6 +87,14 @@ export function createExecutionsRepo(client: PoolClient): ExecutionsRepo {
 
     async markWaiting(id) {
       await client.query(SQL_MARK_EXECUTION_WAITING, [id]);
+    },
+
+    async markFailed(id) {
+      await client.query(SQL_MARK_EXECUTION_FAILED, [id]);
+    },
+
+    async failRemainingForRun(runId) {
+      await client.query(SQL_FAIL_REMAINING_EXECUTIONS_FOR_RUN, [runId]);
     },
 
     async enqueueForRun({ runId, nodeId, input, status, sessionId }) {

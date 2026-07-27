@@ -34,6 +34,36 @@ export const SQL_MARK_EXECUTION_WAITING = `
   WHERE id = $1
 `;
 
+// Package 0011 (docs/impl-plans/0011-worker-cli-dispatch.md): the
+// terminal counterpart to SQL_MARK_EXECUTION_DONE - used by
+// apps/worker when a real dispatch (via the exec-agent) reports a
+// genuine, non-transient failure (a nonzero exit or a timeout, per
+// ADR-0008), rather than a transport-level problem that should instead
+// roll back the claim and retry. 'failed' was already a valid
+// executions.status CHECK-constraint value (core/database/schema.sql)
+// with no writer until this package.
+export const SQL_MARK_EXECUTION_FAILED = `
+  UPDATE executions
+  SET status = 'failed', updated_at = now()
+  WHERE id = $1
+`;
+
+// Local-review fix (docs/impl-plans/0011-worker-cli-dispatch.md): failing
+// ONE step's execution (SQL_MARK_EXECUTION_FAILED above) does nothing
+// about that run's OTHER not-yet-claimed executions - claim_execution()
+// selects purely on executions.status, with no join to workflow_runs, so
+// they would otherwise stay claimable (and get dispatched, running real
+// CLI side effects) against a run apps/worker has already marked failed.
+// Only 'blocked'/'queued'/'waiting' are touched - deliberately NOT
+// 'running' (another worker may already be mid-dispatch on that row;
+// racing to fail it here would conflict with that worker's own
+// completeStep/markFailed call for the SAME row).
+export const SQL_FAIL_REMAINING_EXECUTIONS_FOR_RUN = `
+  UPDATE executions
+  SET status = 'failed', updated_at = now()
+  WHERE run_id = $1 AND status IN ('blocked', 'queued', 'waiting')
+`;
+
 // Task 6.2a (docs/impl-plans/0006-interpreter-plain-steps.md): inserts one
 // execution row for a workflow run's top-level node, with an explicit
 // caller-decided status ('blocked' if the node has unmet dependencies at

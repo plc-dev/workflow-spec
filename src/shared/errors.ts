@@ -33,6 +33,13 @@ export const ERROR_IDS = {
   REGISTRY_TRUST_TIER_INVALID: "registry.trust_tier.invalid",
   REGISTRY_TRUST_TIER_UNKNOWN_DIGEST: "registry.trust_tier.unknown_digest",
   REGISTRY_SERVICE_IMAGE_UPSERT_NO_ROW_RETURNED: "registry.service_images.upsert_no_row_returned",
+  // Package 0011 (docs/impl-plans/0011-worker-cli-dispatch.md).
+  WORKER_AGENT_UNREACHABLE: "apps.worker.agent_client.unreachable",
+  WORKER_INVOKE_REQUEST_REJECTED: "apps.worker.agent_client.invoke_request_rejected",
+  WORKER_INVALID_ARG_FLAG_NAME: "apps.worker.dispatch.invalid_arg_flag_name",
+  WORKER_UNSAFE_ARG_VALUE: "apps.worker.dispatch.unsafe_arg_value",
+  WORKER_MALFORMED_INVOKE_OUTPUT: "apps.worker.dispatch.malformed_invoke_output",
+  WORKER_EXECUTION_MISSING_RUN: "apps.worker.loop.execution_missing_run",
 } as const;
 
 export type ErrorId = (typeof ERROR_IDS)[keyof typeof ERROR_IDS];
@@ -81,6 +88,18 @@ export const DEFAULT_ERROR_MESSAGES: Record<ErrorId, string> = {
     "No registered image exists for the given digest - the runtime can only annotate trust on an image a developer already registered.",
   [ERROR_IDS.REGISTRY_SERVICE_IMAGE_UPSERT_NO_ROW_RETURNED]:
     "Upserting a service image did not return the upserted row.",
+  [ERROR_IDS.WORKER_AGENT_UNREACHABLE]:
+    "The exec-agent could not be reached - safe to retry (the transaction that claimed this execution is rolled back by the caller).",
+  [ERROR_IDS.WORKER_INVOKE_REQUEST_REJECTED]:
+    "The exec-agent rejected the Invoke request itself (a malformed request on our side) - not a transient condition.",
+  [ERROR_IDS.WORKER_INVALID_ARG_FLAG_NAME]:
+    "A step's resolved binding key is not a valid CLI flag name (must match ^[a-zA-Z][a-zA-Z0-9-]*$).",
+  [ERROR_IDS.WORKER_UNSAFE_ARG_VALUE]:
+    "A step's resolved binding value looks like a CLI flag itself (starts with '-') - refusing to dispatch to avoid argument injection into the invoked subprocess.",
+  [ERROR_IDS.WORKER_MALFORMED_INVOKE_OUTPUT]:
+    "The exec-agent's InvokeResponse.output was not a JSON object - this package cannot resolve it into a step's outputs.",
+  [ERROR_IDS.WORKER_EXECUTION_MISSING_RUN]:
+    "A claimed execution referenced a workflow run id that no longer exists.",
 };
 
 export interface PlatformErrorOptions {

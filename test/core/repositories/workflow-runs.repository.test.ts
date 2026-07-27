@@ -58,4 +58,22 @@ describe("WorkflowRunsRepo", () => {
     const failed = await withTransaction(tp.pool, (repos) => repos.workflowRuns.findById(other.id));
     expect(failed?.status).toBe("failed");
   });
+
+  // Local-review fix (docs/impl-plans/0011-worker-cli-dispatch.md):
+  // 'failed' must be a true terminal state - markDone must never
+  // silently flip an already-failed run back to 'done', which could
+  // otherwise happen if a different, already-in-flight sibling
+  // execution's completeStep call completes every remaining node AFTER
+  // apps/worker has already marked the run failed.
+  it("markDone never overwrites an already-failed run's status", async () => {
+    const created = await withTransaction(tp.pool, (repos) =>
+      repos.workflowRuns.create({ spec: {}, input: {} }),
+    );
+    await withTransaction(tp.pool, (repos) => repos.workflowRuns.markFailed(created.id));
+    await withTransaction(tp.pool, (repos) => repos.workflowRuns.markDone(created.id));
+    const found = await withTransaction(tp.pool, (repos) =>
+      repos.workflowRuns.findById(created.id),
+    );
+    expect(found?.status).toBe("failed");
+  });
 });

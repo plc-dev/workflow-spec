@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTransaction } from "../../../src/core/index.js";
 import { type TestPostgres, startTestPostgres } from "../../helpers/postgres.js";
-import { resetExecutionTables } from "../../helpers/reset.js";
+import { resetExecutionAndWorkflowRunTables, resetExecutionTables } from "../../helpers/reset.js";
 
 describe("ExecutionsRepo.claim", () => {
   let tp: TestPostgres;
@@ -76,5 +76,100 @@ describe("ExecutionsRepo.claim", () => {
     expect(reclaimed?.id).toBe(firstClaim?.id);
     expect(reclaimed?.workerId).toBe("worker-b");
     expect(reclaimed?.attempts).toBe(2);
+  });
+});
+
+// Package 0011 (docs/impl-plans/0011-worker-cli-dispatch.md) - the
+// terminal counterpart to markDone, added because apps/worker needs a
+// way to end a step in a non-retrying way when the exec-agent reports a
+// genuine (non-transient) failure. 'failed' was already a valid
+// executions.status CHECK-constraint value with no writer until this
+// package.
+describe("ExecutionsRepo.markFailed", () => {
+  let tp: TestPostgres;
+
+  beforeAll(async () => {
+    tp = await startTestPostgres();
+  }, 60_000);
+
+  afterAll(async () => {
+    await tp.stop();
+  });
+
+  beforeEach(async () => {
+    await resetExecutionTables(tp.pool);
+  });
+
+  it("transitions a running execution to failed, and is idempotent", async () => {
+    const inserted = await tp.pool.query(
+      `INSERT INTO executions (session_id, step, status) VALUES ('s', 'step', 'running') RETURNING id`,
+    );
+    const id = inserted.rows[0].id;
+
+    await withTransaction(tp.pool, (repos) => repos.executions.markFailed(id));
+    const afterFirst = await withTransaction(tp.pool, (repos) => repos.executions.findById(id));
+    expect(afterFirst?.status).toBe("failed");
+
+    // Idempotent - calling it again on an already-failed row is a no-op
+    // write, not an error (mirrors SQL_MARK_EXECUTION_DONE's own posture).
+    await withTransaction(tp.pool, (repos) => repos.executions.markFailed(id));
+    const afterSecond = await withTransaction(tp.pool, (repos) => repos.executions.findById(id));
+    expect(afterSecond?.status).toBe("failed");
+  });
+});
+
+// Local-review fix (docs/impl-plans/0011-worker-cli-dispatch.md) -
+// stops a failed run's other not-yet-claimed executions from staying
+// claimable (claim_execution() has no join to workflow_runs.status).
+describe("ExecutionsRepo.failRemainingForRun", () => {
+  let tp: TestPostgres;
+
+  beforeAll(async () => {
+    tp = await startTestPostgres();
+  }, 60_000);
+
+  afterAll(async () => {
+    await tp.stop();
+  });
+
+  beforeEach(async () => {
+    await resetExecutionAndWorkflowRunTables(tp.pool);
+  });
+
+  it("transitions every blocked/queued/waiting execution of a run to failed, leaving other runs and 'running' rows untouched", async () => {
+    const run = await tp.pool.query(
+      `INSERT INTO workflow_runs (spec, input) VALUES ('{}', '{}') RETURNING id`,
+    );
+    const runId = run.rows[0].id;
+    const otherRun = await tp.pool.query(
+      `INSERT INTO workflow_runs (spec, input) VALUES ('{}', '{}') RETURNING id`,
+    );
+    const otherRunId = otherRun.rows[0].id;
+
+    const rows = await tp.pool.query(
+      `INSERT INTO executions (session_id, run_id, step, status) VALUES
+         ('s', $1, 'queued-step', 'queued'),
+         ('s', $1, 'blocked-step', 'blocked'),
+         ('s', $1, 'waiting-step', 'waiting'),
+         ('s', $1, 'running-step', 'running'),
+         ('s', $2, 'other-run-step', 'queued')
+       RETURNING id, step`,
+      [runId, otherRunId],
+    );
+    const idFor = (step: string) => rows.rows.find((r) => r.step === step).id;
+
+    await withTransaction(tp.pool, (repos) => repos.executions.failRemainingForRun(runId));
+
+    const statusOf = async (id: number) =>
+      (await withTransaction(tp.pool, (repos) => repos.executions.findById(id)))?.status;
+
+    expect(await statusOf(idFor("queued-step"))).toBe("failed");
+    expect(await statusOf(idFor("blocked-step"))).toBe("failed");
+    expect(await statusOf(idFor("waiting-step"))).toBe("failed");
+    // 'running' is deliberately left alone - another worker may be
+    // actively dispatching it right now.
+    expect(await statusOf(idFor("running-step"))).toBe("running");
+    // A different run's execution is never touched.
+    expect(await statusOf(idFor("other-run-step"))).toBe("queued");
   });
 });

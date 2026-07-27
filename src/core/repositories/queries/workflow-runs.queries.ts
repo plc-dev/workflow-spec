@@ -19,11 +19,19 @@ export const SQL_LOCK_WORKFLOW_RUN_FOR_UPDATE =
   "SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE";
 
 // Idempotent, mirrors SQL_MARK_EXECUTION_DONE's own posture - a run
-// already 'done'/'failed' being marked done again is a no-op write.
+// already 'done' being marked done again is a no-op write.
+//
+// Local-review fix (docs/impl-plans/0011-worker-cli-dispatch.md): the
+// `status <> 'failed'` guard is load-bearing, not decorative - without
+// it, a run apps/worker had already marked 'failed' (one step reported a
+// real failure) could be silently flipped back to 'done' if a DIFFERENT,
+// already-in-flight sibling execution's completeStep call happened to
+// complete every remaining node afterwards. A run's 'failed' status must
+// be a true terminal state once set.
 export const SQL_MARK_WORKFLOW_RUN_DONE = `
   UPDATE workflow_runs
   SET status = 'done', updated_at = now()
-  WHERE id = $1
+  WHERE id = $1 AND status <> 'failed'
 `;
 
 export const SQL_MARK_WORKFLOW_RUN_FAILED = `
