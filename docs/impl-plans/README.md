@@ -69,5 +69,6 @@ Each plan document carries:
 | 0009 | DSL compiler: `dsl-compiler/` module (restricted-YAML parse, schema validate, registry-checked compile) | reviewed | 5.2, 5.3, 5.6a |
 | 0010 | In-pod exec-agent: `agent/` Go module (`Invoke`/`Evict` RPC server, injection artifact, local idempotency) | reviewed | 6.12, 6.13, 6.14 |
 | 0011 | `apps/worker`: real CLI dispatch via the exec-agent | reviewed | 6.15, 6.3, 6.4 |
+| 0012 | Secrets: `secrets/` module (broker-agnostic interface + OpenBao adapter) + real worker-side resolution/injection | draft | 9.1, 9.2, 9.3, 9.4, 9.6 (partial) |
 </content>
 </invoke>
