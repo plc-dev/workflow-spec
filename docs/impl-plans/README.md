@@ -67,5 +67,6 @@ Each plan document carries:
 | 0007 | Registry: `registry/`'s own metadata-index database | reviewed | 2.1, 2.1a, 2.1b, 2.1c, 2.2, 2.5, 2.8, 2.10 |
 | 0008 | `shared/database/` + `shared/trust-tier.ts` consolidation (ADR-0012 amendment, cross-cutting refactor) | reviewed | none (infra/process only) |
 | 0009 | DSL compiler: `dsl-compiler/` module (restricted-YAML parse, schema validate, registry-checked compile) | implemented | 5.2, 5.3, 5.6a |
+| 0010 | In-pod exec-agent: `agent/` Go module (`Invoke`/`Evict` RPC server, injection artifact, local idempotency) | reviewed | 6.12, 6.13, 6.14 |
 </content>
 </invoke>

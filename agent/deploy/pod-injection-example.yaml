@@ -1,0 +1,91 @@
+# Generic, documented example of the platform-controlled injection
+# mechanism (task 6.13, docs/adr/0008-in-pod-exec-agent.md) - illustrates
+# the shape for a real onboarded service image, as opposed to
+# deploy/kind/test-pod.yaml's test-fixture-specific version (which this
+# package's T14 actually runs against a real kind cluster - see
+# docs/impl-plans/0010-exec-agent.md's Test design). run-e2e.sh asserts
+# the two manifests' agent flag shape (--listen/--exec/--state-dir) stays
+# in sync, so this example cannot silently drift from what's tested.
+#
+# The only Pod-template fields a real onboarding ever needs to set per
+# service are the init container's target image tag (the platform's own
+# agent image, unrelated to the service) and the `--exec` value (the
+# service's own, already-shipped CLI entrypoint path) - never anything in
+# the service author's own Dockerfile.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: <service-name>-<replica-id>
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+  initContainers:
+    - name: platform-agent-init
+      # Pin by digest in real deployments, not a mutable tag - a mutable
+      # tag plus the default IfNotPresent pull policy can leave nodes
+      # running different agent versions depending on their image cache.
+      image: <platform-registry>/exec-agent@<sha256-digest>
+      command: ["sh", "-c", "cp /platform/agent /shared/agent && chmod +x /shared/agent"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: true
+      resources:
+        requests: {cpu: "10m", memory: "16Mi"}
+        limits: {cpu: "100m", memory: "32Mi"}
+      volumeMounts:
+        - name: agent-bin
+          mountPath: /shared
+  containers:
+    - name: <service-name>
+      image: <service-author's-own-image>:<pinned-digest>
+      # The platform's deployment templating overrides command to this -
+      # the service author's own Dockerfile ENTRYPOINT/CMD is never
+      # consulted or modified.
+      command:
+        - /shared/agent
+        - --listen
+        - ":9464"
+        - --exec
+        - <original-entrypoint-path-inside-the-service-image>
+        - --state-dir
+        - /var/run/agent-state
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: true
+      # A real onboarding must size these per service - the platform
+      # cannot pick one default that fits every wrapped CLI's workload.
+      resources:
+        requests: {cpu: "50m", memory: "32Mi"}
+        limits: {cpu: "500m", memory: "256Mi"}
+      ports:
+        - containerPort: 9464
+      # tcpSocket is the ceiling without a dedicated /healthz endpoint on
+      # the agent (not built in this package) - it at least confirms the
+      # listener is up before the Pod is marked Ready/kept alive.
+      readinessProbe:
+        tcpSocket:
+          port: 9464
+        initialDelaySeconds: 1
+        periodSeconds: 2
+      livenessProbe:
+        tcpSocket:
+          port: 9464
+        initialDelaySeconds: 2
+        periodSeconds: 5
+      volumeMounts:
+        - name: agent-bin
+          mountPath: /shared
+        - name: agent-state
+          mountPath: /var/run/agent-state
+  volumes:
+    - name: agent-bin
+      emptyDir: {}
+    - name: agent-state
+      emptyDir: {}

@@ -1,0 +1,89 @@
+# T14's real injection manifest (docs/impl-plans/0010-exec-agent.md /
+# task 6.13): an initContainer copies the static agent binary onto a
+# shared emptyDir; the target container is fake-service:test (the
+# "service author's" image, containing ONLY testdata/fake-cli.sh - no
+# agent/platform code at all), with its `command` overridden by the
+# platform's own deployment templating to run the injected agent as
+# PID 1, per ADR-0008's literal shape:
+#   /platform/agent --listen :9464 --exec <original-entrypoint>
+#
+# Post-review hardening (docs/impl-plans/0010-exec-agent.md's
+# Implementation notes): a non-root securityContext, resource
+# requests/limits, a readiness/liveness probe, and an explicit
+# --state-dir volume mount, mirroring pod-injection-example.yaml's
+# generic template - run-e2e.sh asserts the two manifests' agent flag
+# shape stays in sync (the drift risk a local review flagged).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exec-agent-injection-test
+  labels:
+    app: exec-agent-injection-test
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+  initContainers:
+    - name: platform-agent-init
+      image: exec-agent:test
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c", "cp /platform/agent /shared/agent && chmod +x /shared/agent"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: true
+      resources:
+        requests: {cpu: "10m", memory: "16Mi"}
+        limits: {cpu: "100m", memory: "32Mi"}
+      volumeMounts:
+        - name: agent-bin
+          mountPath: /shared
+  containers:
+    - name: fake-service
+      image: fake-service:test
+      imagePullPolicy: IfNotPresent
+      # This is the ONLY thing that differs from the author's own image -
+      # the platform's Pod-template command override (ADR-0008), never a
+      # change to fake-service:test's own Dockerfile.
+      command:
+        - /shared/agent
+        - --listen
+        - ":9464"
+        - --exec
+        - /usr/local/bin/fake-cli.sh
+        - --state-dir
+        - /var/run/agent-state
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: true
+      resources:
+        requests: {cpu: "50m", memory: "32Mi"}
+        limits: {cpu: "500m", memory: "256Mi"}
+      ports:
+        - containerPort: 9464
+      readinessProbe:
+        tcpSocket:
+          port: 9464
+        initialDelaySeconds: 1
+        periodSeconds: 2
+      livenessProbe:
+        tcpSocket:
+          port: 9464
+        initialDelaySeconds: 2
+        periodSeconds: 5
+      volumeMounts:
+        - name: agent-bin
+          mountPath: /shared
+        - name: agent-state
+          mountPath: /var/run/agent-state
+  volumes:
+    - name: agent-bin
+      emptyDir: {}
+    - name: agent-state
+      emptyDir: {}
+  restartPolicy: Never
